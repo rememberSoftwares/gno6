@@ -15,7 +15,17 @@ By combining the flexibility of multi-agent frameworks and robust tool-calling c
 - **Self-Correction**: Uses `kubectl help` to refine and propose accurate commands.
 - **Multi-Agent Architecture**: Built on **Yacana**, allowing for distributed task execution and tool calling.
 - **Local Deployment**: Runs entirely on your machine with Ollama as a requirement, keeping your workflows private and efficient.
+
+---
+
+## Who is it for?
+
+**gno6** is designed for DevOps professionals of all levels—from beginners to power users.
+
+- **Beginners**: gno6 offers an intuitive way to work with Kubernetes. By iterating on commands and allowing user interaction to achieve a valid result, it provides a valuable learning experience. gno6 helps users discover new ways to utilize `kubectl` with arguments they may not have encountered otherwise.
   
+- **Senior Users**: For experienced DevOps practitioners, gno6 is about saving time and reducing friction. You no longer need to sift through the documentation to find that one parameter you know exists but can't recall the exact syntax for.
+
 ---
 
 ## Installation
@@ -66,20 +76,6 @@ gno6: kubectl get pods -n dev --field-selector=status.phase=Running
 
 ---
 
-## Contributing
-
-Contributions are welcome! If you'd like to improve **gno6** or suggest new features, feel free to open a pull request or submit an issue.
-
----
-
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for more details.
-
----
-
-## Acknowledgements
-
-Special thanks to:
-- The **Yacana** framework for enabling multi-agent collaboration.
-- The **Ollama** team for providing the infrastructure to run LLMs locally.
