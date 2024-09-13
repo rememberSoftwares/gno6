@@ -28,6 +28,11 @@ By combining the flexibility of multi-agent frameworks and robust tool-calling c
 
 ---
 
+## Requirements
+
+* Python3
+* Ollama
+
 ## Installation
 
 1. Install [Ollama](https://ollama.com) to enable local LLM execution.
@@ -53,6 +58,15 @@ Once installed, you can begin translating natural language queries into Kubernet
 python gno6.py
 ```
 
+```
+options:
+  -h, --help            show this help message and exit
+  --model MODEL         Specify the model name (default: llama3.1:8b)
+  --endpoint ENDPOINT   Specify the endpoint (default: http://127.0.0.1:11434)
+  --log-level LOG_LEVEL
+                        Specify the default logging level. [None, DEBUG, INFO, WARNING WARN, ERROR] (default: None)
+```
+
 Provide a query, and gno6 will return the corresponding `kubectl` command.
 
 Example:
@@ -61,18 +75,20 @@ User: Show me all running pods in the dev namespace.
 gno6: kubectl get pods -n dev --field-selector=status.phase=Running
 ```
 
-### Options
-
-- **Command Preview**: gno6 provides the command it intends to execute, allowing you to review before running.
-- **Self-Help Adjustment**: The tool analyzes `kubectl help` to fine-tune its suggestions and minimize errors.
-
 ---
 
-## Why Use gno6?
+## Why use gno6?
 
 - **Accuracy**: By leveraging `kubectl help`, the tool avoids common pitfalls and adapts to new `kubectl` releases.
 - **Efficiency**: No need to memorize or look up `kubectl` commands—just ask in natural language.
 - **Local Execution**: Full control over your environment with the added privacy of running the model locally.
+
+## Roadmap
+
+* Adding user in the loop to ask for more context information
+* Adding memory
+* Make a crew plugin
+* Many more features to come...
 
 ---
 
