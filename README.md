@@ -16,6 +16,8 @@ By combining the flexibility of multi-agent frameworks and robust tool-calling c
 - **Multi-Agent Architecture**: Built on **Yacana**, allowing for distributed task execution and tool calling.
 - **Local Deployment**: Runs entirely on your machine with Ollama as a requirement, keeping your workflows private and efficient.
 
+⚠️ This tool is in ALPHA and is not yet ready for production. Follow [this account](https://x.com/RSoftwares_ofc) to stay tuned.  
+
 ---
 
 ## Who is it for?
@@ -25,6 +27,43 @@ By combining the flexibility of multi-agent frameworks and robust tool-calling c
 - **Beginners**: gno6 offers an intuitive way to work with Kubernetes. By iterating on commands and allowing user interaction to achieve a valid result, it provides a valuable learning experience. gno6 helps users discover new ways to utilize `kubectl` with arguments they may not have encountered otherwise.
   
 - **Senior Users**: For experienced DevOps practitioners, gno6 is about saving time and reducing friction. You no longer need to sift through the documentation to find that one parameter you know exists but can't recall the exact syntax for.
+
+## Sample output
+
+```
+Welcome to GnosisCTL, the smart kubectl CLI helper
+How can I assist you with your kubectl commands ?
+> Create a deployment called mynginx with image nginx
+Preparing...
+Thinking...
+
+Initial kubectl command proposition: ``kubectl delete pods --field-selector=status=Running,metadata.creationTimestamp<`date -d '-5 minutes' '+%s'``
+
+Validating command with output of 'kubectl help'...
+After reviewing 'kubectl help' I'm not happy with the proposed command. Let's try again.
+Thinking...
+
+Initial kubectl command proposition: `kubectl create deployment mynginx --image=nginx`
+
+Validating command with output of 'kubectl help'...
+
+kubectl create deployment mynginx --image=nginx
+
+Should I execute the command for you?
+> sure
+
+deployment.apps/mynginx created
+
+
+Command execution was a success.
+How can I assist you with your kubectl commands ?
+>
+```
+Step by step:  
+* We asked to `Create a deployment called mynginx with image nginx`.  
+* After thinking of the silliest command: `kubectl delete pods` (wtf...). It checked with `kubectl help` and proposed `kubectl create deployment mynginx --image=nginx`.
+* Then it proposed to execute the command itself. To which we answered yes.
+* It detected that the execution was a success and we are back to the start.
 
 ---
 
@@ -82,6 +121,8 @@ gno6: kubectl get pods -n dev --field-selector=status.phase=Running
 - **Accuracy**: By leveraging `kubectl help`, the tool avoids common pitfalls and adapts to new `kubectl` releases.
 - **Efficiency**: No need to memorize or look up `kubectl` commands—just ask in natural language.
 - **Local Execution**: Full control over your environment with the added privacy of running the model locally.
+
+---
 
 ## Roadmap
 
