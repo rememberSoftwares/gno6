@@ -5,6 +5,9 @@ from typing import Callable, List
 import re
 import argparse
 
+from qualification import qualify_request
+from team import Team
+
 print("Welcome to GnosisCTL, the smart kubectl CLI helper")
 
 main_agent: Agent = None
@@ -70,6 +73,7 @@ def final_command_output(k_nb_occurrences: int) -> str:
     #print(f"=> {command}")
     return command
 
+
 ############################################### Categories #########################################################
 
 def knowledge_category(user_query: str):
@@ -78,57 +82,7 @@ def knowledge_category(user_query: str):
     print("=> ", Task(f"{user_query}", main_agent).solve().content)
 
 
-def simple_category(user_query: str, max_iter=2) -> str:
-    print("Thinking...")
-    command: str = Task(
-        f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query and nothing more. <user_query>{user_query}</user_query>.",
-        main_agent).solve().content
-    command = command.strip()
-    if not command.startswith("kubectl"):
-        command = explain_missing_kubectl()
-    print(f"\nInitial kubectl command proposition: `{command}`\n")
-    print("Validating command with output of 'kubectl help'...")
 
-    k_nb_occurrences: int = command.count("kubectl")
-
-    get_help_task: Task = Task(
-        #You must evaluate the validity of the following kubectl command(s)
-        f"I will give you an unknown string that may contain one or more kubectl commands. You must use the 'kubectl_help' tool for each kubectl command you find in that string. Your task is finished when the tool has been called on all kubectl commands. The string is <unknown_string>{command}</unknown_string>",
-        k8s_help_agent,
-        tools=[Tool("kubectl_help",
-                    "Outputs the syntax help from 'kubectl <action_verb> <resource_type> --help'.",
-                    get_cmd_help,
-                    usage_examples=[{"action_verb": "get", "resource_type": "deployment"}])])
-
-    #print("-----------------------ALL HELP COMMANDS-----------------------")
-    #print(get_help_task.solve().content)
-
-    cmd_and_help: str = ""
-    if k_nb_occurrences == 1:
-        cmd_and_help = "$ " + command + "\n" + k8s_help_agent.history.get_last().content
-    else:
-        cmd_and_help = Task("Based on your previous answer. Aggregate the outputs of all kubectl commands and their associated help output. It should look like this : ```\n$ <kubectl_command>\n<help output from the tool>\n---\n$ <kubectl_command>\n<help output from the tool>\n```", k8s_help_agent).solve().content
-
-    #print("############# command and help ###################")
-    #print(cmd_and_help)
-    #print("#############End command and help")
-
-
-    Task(f"Your new task is to evaluate if the command{'s' if k_nb_occurrences > 1 else ''} you generated ('{command}') {'are' if k_nb_occurrences > 1 else 'is'} in accordance with the initial query of the user. I will provide the result of the associated 'kubectl <cmd> --help' in my next message. You must reflect on the command you chose and if it really matches the user's request.", main_agent).solve()
-    Task(f"The query of the user was <user_query>{user_query}</user_query>.\nThe 'kubectl cmd --help' output of your chosen command{'s' if k_nb_occurrences > 1 else ''} is given bellow:\n{cmd_and_help}", main_agent).solve()
-
-    if max_iter <= 0:
-        return final_command_output(k_nb_occurrences)
-
-    restart_flow_router: str = Task("To summarize your previous answer in one word. Do you need to rework the command you initially generated ? Answer ONLY by 'yes' or 'no'.", main_agent, forget=True).solve().content
-    if "yes" in restart_flow_router.lower():
-        main_agent.history.add(Message(MessageRole.USER, "Okay, if the command you generated is not a perfect match we will start over the whole process from the beginning. Be sure not to make the same mistake twice."))
-        main_agent.history.add(Message(MessageRole.SYSTEM, "Sure, let's start again. This time I will make sure to use the correct arguments and kubectl verbs using the knowledge I gained."))
-        max_iter -= 1
-        print("After reviewing 'kubectl help' I'm not happy with the proposed command. Let's try again.")
-        return simple_category(user_query, max_iter)
-    else:
-        return final_command_output(k_nb_occurrences)
 
 
 def complex_category(user_query: str):
@@ -144,24 +98,11 @@ def unrelated_category(user_query: str):
     llm_answer: str = Task(f"{user_query}", main_agent).solve().content
     return llm_answer
 
-def get_request_qualification(max_iter: int = 4) -> str:
-    uid_from_llm: str = Task(
-        "To summarize your previous answer in one word. What was the category uid you chose. Only output the category uid.",
-        assessment_agent).solve().content
-    uid_from_llm = uid_from_llm.replace("'", "").replace('"', "")
-    real_uid: str = next((qual["uid"] for qual in query_qualification if uid_from_llm.lower() in qual["uid"]), None)
-    if max_iter <= 0:
-        raise SystemExit("Reached max iteration during qualification")
-    if real_uid is None:
-        Task(
-            f"You didn't only output one of the categories. You must choose one of {','.join([qual['uid'] for qual in query_qualification])} and output ONLY the category you chose.",
-            assessment_agent).solve()
-        max_iter -= 1
-        real_uid = get_request_qualification(max_iter=max_iter)
-    return real_uid
 
 
-def init_agents(model: str, endpoint: str, logging_level) -> None:
+
+
+def init_agents(model: str, endpoint: str, logging_level, namespace: str | None) -> Team:
     global main_agent
     global assessment_agent
     global logic_agent
@@ -177,6 +118,10 @@ def init_agents(model: str, endpoint: str, logging_level) -> None:
                            system_prompt="You are an AI assistant that can access kubectl command line help. You make sure that kubectl commands are valid and help refacto them if needed.", endpoint=endpoint)
     LoggerManager.set_log_level(None if logging_level == "None" else logging_level)
 
+    if namespace is not None:
+        main_agent.history.add(Message(MessageRole.USER, f"Targeted Kubernetes namespace is {namespace}"))
+        main_agent.history.add(Message(MessageRole.ASSISTANT, f"Okay! Now on, all Kubernetes commands should set this argument: '-n {namespace}'"))
+    return Team(main_agent, assessment_agent, logic_agent, k8s_help_agent)
 
 def reset_agents(agents: List[Agent]) -> None:
     for agent in agents:  # if we keep that we loose the knowledge history. So maybe the function that treats this part should be added to the main_agent after the clean
@@ -184,12 +129,13 @@ def reset_agents(agents: List[Agent]) -> None:
 
 
 def arg_parsing() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Process some model and endpoint parameters.")
+    parser = argparse.ArgumentParser(description="Process parameters to configure Gno6 runtime.")
 
     # Define optional named parameters with default values
     parser.add_argument('--model', type=str, default='llama3.1:8b', help='Specify the model name (default: llama3.1:8b)')
     parser.add_argument('--endpoint', type=str, default='http://127.0.0.1:11434', help='Specify the endpoint (default: http://127.0.0.1:11434)')
-    parser.add_argument('--log-level', type=str, default=None, help='Specify the default logging level. [None, DEBUG, INFO, WARNING WARN, ERROR] (default: None)')
+    parser.add_argument('--log-level', type=str, default=None, help='Specify the logging level. [None, DEBUG, INFO, WARNING WARN, ERROR] (default: None)')
+    parser.add_argument('-n', '--namespace', type=str, default=None, help='Specify the K8s namespace inherent to the future generated command (default: None)')
 
     # Parse the arguments
     return parser.parse_args()
@@ -235,51 +181,22 @@ def execute_command_in_place_of_user(k8s_cmd: str) -> bool:
     return True
 
 
-query_qualification = [
-    {
-        'uid': 'general',
-        'description': 'Asking for general kubernetes knowledge.',
-        'ref': knowledge_category
-    },
-    {
-        'uid': 'simple',
-        'description': 'Simple query easily answered with only one kubectl command.',
-        'ref': simple_category
-    },
-    {
-        'uid': 'complex',
-        'description': 'Complex query that might involve multiple kubectl commands, maybe bash syntax or even human input.',
-        'ref': complex_category
-    },
-    {
-        'uid': 'file',
-        'description': 'Will definitely need a file to write YAML into and then maybe apply it.',
-        'ref': file_category
-    },
-    {
-        'uid': 'unrelated',
-        'description': 'Has nothing to do with Kubernetes. Is off kubernetes topic.',
-        'ref': unrelated_category
-    }
-]
-
-
-
 def main():
 
     args: argparse.Namespace = arg_parsing()
-    init_agents(args.model, args.endpoint, args.log_level)
+    team: Team = init_agents(args.model, args.endpoint, args.log_level, args.namespace)
     agents: List[Agent] = [main_agent, assessment_agent, logic_agent, k8s_help_agent]
+    # Removing 'ref' field from the query_qualification array
+    query_qualification_stripped = [{k: v for k, v in item.items() if k != 'ref'} for item in query_qualification]
 
     while True:
         print("How can I assist you with your kubectl commands ?")
         user_query: str = input("> ")
         print("Preparing...")
-        query_qualification_stripped = [{k: v for k, v in item.items() if k != 'ref'} for item in query_qualification]
-        Task(
-            f"I will give you the request of a user. You must qualify what the request is about and chose a category that best matches the query. The categories are defined in JSON : {query_qualification_stripped}.\nThe user's query is the following: <user_query>{user_query}</user_query>. In your opinion what category best matches the request ? Explain your reasoning.",
-            assessment_agent).solve()
-        uid: str = get_request_qualification()
+
+        uuid = qualify_request()
+
+
         if uid == "simple" or uid == "complex" or uid == "file":
             add_minimal_k8s_help_to_history(main_agent)
         while True:
