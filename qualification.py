@@ -1,29 +1,30 @@
+from typing_extensions import Callable
 from yacana import Task
 from team import Team
 
 query_qualification = [
     {
-        'uid': 'general',
+        'type': 'general',
         'description': 'Asking for general kubernetes knowledge.',
         'ref': knowledge_category
     },
     {
-        'uid': 'simple',
+        'type': 'simple',
         'description': 'Simple query easily answered with only one kubectl command.',
         'ref': simple_category
     },
     {
-        'uid': 'complex',
+        'type': 'complex',
         'description': 'Complex query that might involve multiple kubectl commands, maybe bash syntax or even human input.',
         'ref': complex_category
     },
     {
-        'uid': 'file',
+        'type': 'file',
         'description': 'Will definitely need a file to write YAML into and then maybe apply it.',
         'ref': file_category
     },
     {
-        'uid': 'unrelated',
+        'type': 'unrelated',
         'description': 'Has nothing to do with Kubernetes. Is off kubernetes topic.',
         'ref': unrelated_category
     }
@@ -31,23 +32,30 @@ query_qualification = [
 
 
 def get_request_qualification(team: Team, max_iter: int = 4) -> str:
-    uid_from_llm: str = Task(
-        "To summarize your previous answer in one word. What was the category uid you chose. Only output the category uid.",
+    type_from_llm: str = Task(
+        "To summarize your previous answer in one word. What was the category type you chose. Only output the category type.",
         team.assessment_agent).solve().content
-    uid_from_llm = uid_from_llm.replace("'", "").replace('"', "")
-    real_uid: str = next((qual["uid"] for qual in query_qualification if uid_from_llm.lower() in qual["uid"]), None)
+    type_from_llm = type_from_llm.replace("'", "").replace('"', "")
+    type_from_json: str = next((qual["type"] for qual in query_qualification if type_from_llm.lower() in qual["type"]), None)
     if max_iter <= 0:
         raise SystemExit("Reached max iteration during qualification")
-    if real_uid is None:
+    if type_from_json is None:
         Task(
-            f"You didn't only output one of the categories. You must choose one of {','.join([qual['uid'] for qual in query_qualification])} and output ONLY the category you chose.",
+            f"You didn't only output one of the categories. You must choose one of {','.join([qual['type'] for qual in query_qualification])} and output ONLY the category you chose.",
             team.assessment_agent).solve()
         max_iter -= 1
-        real_uid = get_request_qualification(team, max_iter=max_iter)
-    return real_uid
+        type_from_json = get_request_qualification(team, max_iter=max_iter)
+    return type_from_json
 
-def qualify_request(team: Team):
+
+def get_request_qualification_ref(request_type: str) -> Callable:
+    return next((qual["ref"] for qual in query_qualification if qual["type"] == request_type), None)  # @todo check None
+
+
+def qualify_request(team: Team, user_query: str) -> str:
+    # Removing 'ref' field from the query_qualification JSON array
+    query_qualification_stripped = [{k: v for k, v in item.items() if k != 'ref'} for item in query_qualification]
     Task(
         f"I will give you the request of a user. You must qualify what the request is about and chose a category that best matches the query. The categories are defined in JSON : {query_qualification_stripped}.\nThe user's query is the following: <user_query>{user_query}</user_query>. In your opinion what category best matches the request ? Explain your reasoning.",
         team.assessment_agent).solve()
-    uid: str = get_request_qualification(team)
+    return get_request_qualification(team)
