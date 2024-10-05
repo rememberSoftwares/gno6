@@ -1,19 +1,24 @@
-from yacana import Task, Tool, Message, MessageRole
+from yacana import Task, Message, MessageRole
 
+from category import Category
 from common_utils import final_command_output
 from k8s_utils import explain_missing_kubectl
 from team import Team
 
 
-class SimpleCategory:
+class SimpleCategory(Category):
 
-    def __init__(self, team: Team):
+    def __init__(self, user_query: str, team: Team):
+        self.user_query = user_query
         self.team: Team = team
 
-    def simple_category(self, user_query: str, max_iter=2) -> str:
+    def start_workflow(self) -> str:
+        return self.simple_category()
+
+    def simple_category(self, max_iter=2) -> str:
         print("Thinking...")
         command: str = Task(
-            f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query and nothing more. <user_query>{user_query}</user_query>.",
+            f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query and nothing more. <user_query>{self.user_query}</user_query>.",
             self.team.main_agent).solve().content
         command = command.strip()
         if not command.startswith("kubectl"):
@@ -23,31 +28,28 @@ class SimpleCategory:
 
         k_nb_occurrences: int = command.count("kubectl")
 
-        get_help_task: Task = Task(
-            #You must evaluate the validity of the following kubectl command(s)
-            f"I will give you an unknown string that may contain one or more kubectl commands. You must use the 'kubectl_help' tool for each kubectl command you find in that string. Your task is finished when the tool has been called on all kubectl commands. The string is <unknown_string>{command}</unknown_string>",
-            self.team.k8s_help_agent,
-            tools=[Tool("kubectl_help",
-                        "Outputs the syntax help from 'kubectl <action_verb> <resource_type> --help'.",
-                        get_cmd_help,
-                        usage_examples=[{"action_verb": "get", "resource_type": "deployment"}])])
+        # get_help_task: Task = Task(
+        #    f"I will give you an unknown string that may contain one or more kubectl commands. You must use the 'kubectl_help' tool for each kubectl command you find in that string. Your task is finished when the tool has been called on all kubectl commands. The string is <unknown_string>{command}</unknown_string>",
+        #    self.team.k8s_help_agent,
+        #    tools=[Tool("kubectl_help",
+        #                "Outputs the syntax help from 'kubectl <action_verb> <resource_type> --help'.",
+        #                get_cmd_help,
+        #                usage_examples=[{"action_verb": "get", "resource_type": "deployment"}])])
 
-        #print("-----------------------ALL HELP COMMANDS-----------------------")
-        #print(get_help_task.solve().content)
+        # print("-----------------------ALL HELP COMMANDS-----------------------")
+        # print(get_help_task.solve().content)
 
-        cmd_and_help: str = ""
         if k_nb_occurrences == 1:
             cmd_and_help = "$ " + command + "\n" + self.team.k8s_help_agent.history.get_last().content
         else:
-            cmd_and_help = Task("Based on your previous answer. Aggregate the outputs of all kubectl commands and their associated help output. It should look like this : ```\n$ <kubectl_command>\n<help output from the tool>\n---\n$ <kubectl_command>\n<help output from the tool>\n```", k8s_help_agent).solve().content
+            cmd_and_help = Task("Based on your previous answer. Aggregate the outputs of all kubectl commands and their associated help output. It should look like this : ```\n$ <kubectl_command>\n<help output from the tool>\n---\n$ <kubectl_command>\n<help output from the tool>\n```", self.team.k8s_help_agent).solve().content
 
-        #print("############# command and help ###################")
-        #print(cmd_and_help)
-        #print("#############End command and help")
+        # print("############# command and help ###################")
+        # print(cmd_and_help)
+        # print("#############End command and help")
 
-
-        Task(f"Your new task is to evaluate if the command{'s' if k_nb_occurrences > 1 else ''} you generated ('{command}') {'are' if k_nb_occurrences > 1 else 'is'} in accordance with the initial query of the user. I will provide the result of the associated 'kubectl <cmd> --help' in my next message. You must reflect on the command you chose and if it really matches the user's request.", main_agent).solve()
-        Task(f"The query of the user was <user_query>{user_query}</user_query>.\nThe 'kubectl cmd --help' output of your chosen command{'s' if k_nb_occurrences > 1 else ''} is given bellow:\n{cmd_and_help}", self.team.main_agent).solve()
+        Task(f"Your new task is to evaluate if the command{'s' if k_nb_occurrences > 1 else ''} you generated ('{command}') {'are' if k_nb_occurrences > 1 else 'is'} in accordance with the initial query of the user. I will provide the result of the associated 'kubectl <cmd> --help' in my next message. You must reflect on the command you chose and if it really matches the user's request.", self.team.main_agent).solve()
+        Task(f"The query of the user was <user_query>{self.user_query}</user_query>.\nThe 'kubectl cmd --help' output of your chosen command{'s' if k_nb_occurrences > 1 else ''} is given bellow:\n{cmd_and_help}", self.team.main_agent).solve()
 
         if max_iter <= 0:
             return final_command_output(self.team, k_nb_occurrences)
@@ -58,6 +60,6 @@ class SimpleCategory:
             self.team.main_agent.history.add(Message(MessageRole.SYSTEM, "Sure, let's start again. This time I will make sure to use the correct arguments and kubectl verbs using the knowledge I gained."))
             max_iter -= 1
             print("After reviewing 'kubectl help' I'm not happy with the proposed command. Let's try again.")
-            return self.simple_category(user_query, max_iter)
+            return self.simple_category(max_iter=max_iter)
         else:
             return final_command_output(self.team, k_nb_occurrences)

@@ -1,4 +1,8 @@
-class Category:
+from abc import ABC, abstractmethod
 
-    def __init__(self, ):
+
+class Category(ABC):
+
+    @abstractmethod
+    def start_workflow(self):
         pass

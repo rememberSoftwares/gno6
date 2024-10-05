@@ -1,32 +1,29 @@
 from typing_extensions import Callable
 from yacana import Task
+
+from CategoryFactory import CategoryFactory
 from team import Team
 
 query_qualification = [
     {
         'type': 'general',
-        'description': 'Asking for general kubernetes knowledge.',
-        'ref': knowledge_category
+        'description': 'Asking for general kubernetes knowledge.'
     },
     {
         'type': 'simple',
-        'description': 'Simple query easily answered with only one kubectl command.',
-        'ref': simple_category
+        'description': 'Simple query easily answered with only one kubectl command.'
     },
     {
         'type': 'complex',
-        'description': 'Complex query that might involve multiple kubectl commands, maybe bash syntax or even human input.',
-        'ref': complex_category
+        'description': 'Complex query that might involve multiple kubectl commands, maybe bash syntax or even human input.'
     },
     {
         'type': 'file',
-        'description': 'Will definitely need a file to write YAML into and then maybe apply it.',
-        'ref': file_category
+        'description': 'Will definitely need a file to write YAML into and then maybe apply it.'
     },
     {
         'type': 'unrelated',
-        'description': 'Has nothing to do with Kubernetes. Is off kubernetes topic.',
-        'ref': unrelated_category
+        'description': 'Has nothing to do with Kubernetes. Is off kubernetes topic.'
     }
 ]
 
@@ -49,6 +46,7 @@ def get_request_qualification(team: Team, max_iter: int = 4) -> str:
 
 
 def get_request_qualification_ref(request_type: str) -> Callable:
+    CategoryFactory.get_category(request_type)
     return next((qual["ref"] for qual in query_qualification if qual["type"] == request_type), None)  # @todo check None
 
 

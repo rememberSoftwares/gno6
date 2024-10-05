@@ -3,7 +3,6 @@ import subprocess
 from yacana import Agent, Task
 
 
-
 def exec_kubectl_cmd(kubectl_cmd: str) -> str:
     try:
         # result = subprocess.run(final_cmd, shell=True, check=True, text=True, capture_output=True, stderr=subprocess.STDOUT)

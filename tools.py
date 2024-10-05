@@ -13,8 +13,8 @@ def call_kubectl_cmd(cmd: str):
         raise ToolError(repr(
             e.output) + '\nRemember that you must call this tool with a kubectl action and a kubectl resource. For instance: {"action_verb": "get", "resource": "pod"}')
 
+
 def get_cmd_help(action_verb: str, resource_type: str) -> str:
-    #print(f"Tool is called with {action_verb} and {resource_type}")
 
     all_k8s_resources: str = call_kubectl_cmd("kubectl api-resources --no-headers=true")
 
