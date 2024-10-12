@@ -24,6 +24,7 @@ class Team:
         self.k8s_help_agent = k8s_help_agent
 
     def reset(self):
+        self.main_agent.history.pretty_print()
         self.main_agent.history.clean()
         self.assessment_agent.history.clean()
         self.logic_agent.history.clean()

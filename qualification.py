@@ -1,7 +1,7 @@
 from typing_extensions import Callable
 from yacana import Task
 
-from CategoryFactory import CategoryFactory
+from category_factory import CategoryFactory
 from team import Team
 
 query_qualification = [

@@ -1,7 +1,7 @@
 from yacana import Task
 import argparse
 
-from CategoryFactory import CategoryFactory
+from category_factory import CategoryFactory
 from category import Category
 from execute import execute_command_in_place_of_user
 from k8s_utils import add_minimal_k8s_help_to_history

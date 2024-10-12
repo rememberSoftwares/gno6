@@ -24,7 +24,8 @@ def execute_command_in_place_of_user(main_agent: Agent, k8s_cmd: str) -> bool:
     """
     print("\nShould I execute the command for you?")
     should_execute: str = input("> ")
-    router: str = Task(f"The user was asked a 'yes'/'no' question. Determine what was his choice and ONLY output 'yes' if it was affirmative else ONLY output 'no'. His answer: '{should_execute}'", main_agent, forget=True).solve().content
+    # @todo changer l'agent car peut etre que l'history le bug
+    router: str = Task(f"The user was asked a 'yes'/'no' question. Determine what was their choice based on common affirmations and denials. ONLY output 'yes' if the response was affirmative (e.g., 'yes', 'sure', 'definitely', 'of course'), and 'no' if it was negative (e.g., 'no', 'not at all', 'never'). User's answer: '[{should_execute}]'", main_agent).solve().content
     if "yes" in router.lower():
         try:
             cmd_output = exec_kubectl_cmd(k8s_cmd)

@@ -18,11 +18,11 @@ class SimpleCategory(Category):
     def simple_category(self, max_iter=2) -> str:
         print("Thinking...")
         command: str = Task(
-            f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query and nothing more. <user_query>{self.user_query}</user_query>.",
+            f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query (without any surrounding quotes) and nothing more. <user_query>{self.user_query}</user_query>.",
             self.team.main_agent).solve().content
         command = command.strip()
         if not command.startswith("kubectl"):
-            command = explain_missing_kubectl(self.team)
+            command = explain_missing_kubectl(self.team, command)
         print(f"\nInitial kubectl command proposition: `{command}`\n")
         print("Validating command with output of 'kubectl help'...")
 
@@ -54,7 +54,7 @@ class SimpleCategory(Category):
         if max_iter <= 0:
             return final_command_output(self.team, k_nb_occurrences)
 
-        restart_flow_router: str = Task("To summarize your previous answer in one word. Do you need to rework the command you initially generated ? Answer ONLY by 'yes' or 'no'.", self.team.main_agent, forget=True).solve().content
+        restart_flow_router: str = Task("To summarize your previous answer in one word. Do you need to rework the command you initially generated ? Answer ONLY by 'yes' or 'no'.", self.team.main_agent).solve().content
         if "yes" in restart_flow_router.lower():
             self.team.main_agent.history.add(Message(MessageRole.USER, "Okay, if the command you generated is not a perfect match we will start over the whole process from the beginning. Be sure not to make the same mistake twice."))
             self.team.main_agent.history.add(Message(MessageRole.SYSTEM, "Sure, let's start again. This time I will make sure to use the correct arguments and kubectl verbs using the knowledge I gained."))
