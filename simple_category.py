@@ -1,3 +1,5 @@
+import json
+
 from yacana import Task, Message, MessageRole
 
 from category import Category
@@ -63,3 +65,7 @@ class SimpleCategory(Category):
             return self.simple_category(max_iter=max_iter)
         else:
             return final_command_output(self.team, k_nb_occurrences)
+
+
+
+
