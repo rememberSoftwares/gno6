@@ -6,20 +6,26 @@ from tools import call_kubectl_cmd
 from itertools import takewhile
 
 
-def explain_missing_kubectl(team: Team, command: str, recursion=2) -> str:
+def explain_missing_kubectl(team: Team, command: str, recursion=3) -> str:
     # Using RECURSION to check if after finishing the first run of this function the issue is solved
+    if recursion <= 0:
+        raise ValueError("LLM failed to generate a syntax valid Kubectl command") #@todo pas valueError ici. C null. Pis Faut catch plus haut.
+
     if command.startswith("kubectl"):
         print("the fuck 1")
         return command
 
-    if recursion <= 0:
+    if recursion <= 1:
         print("the fuck 2")
-        ask_for_help(team.main_agent, f"Current kubectl command is: [{command}] (the '[]' are hardcoded and are not part of the LLM output so don't take them into account)", "The objective is to generate a VALID kubectl command that must START with kubectl. It seems that the command doesn't start with kubectl and can't figure why.")
+        recursion -= 1
+        explain_missing_kubectl(team, ask_for_help(team.main_agent, f"Current kubectl command is: [{command}] (the '[]' are hardcoded and are not part of the LLM output so don't take them into account)", "The objective is to generate a VALID kubectl command that must START with kubectl. It seems that the command doesn't start with kubectl and can't figure why."), recursion)
 
     try:
         print("the fuck 3")
         if command.startswith("`") or command.startswith("\"") or command.startswith("\'"):
-            return strip_quotes(team, command)
+            return explain_missing_kubectl(team, strip_quotes(team, command), recursion)
+        else:
+            return command
     except ValueError:
         checkpoint: str = team.main_agent.history.create_check_point()
         GroupSolve(
@@ -40,14 +46,14 @@ def explain_missing_kubectl(team: Team, command: str, recursion=2) -> str:
 
 
 def strip_quotes(team: Team, command: str) -> str:
-        new_cmd: str = Task("It seems that the command you generated starts with a quote. Please generate this same command WITHOUT surrounding quotes. I only need the raw kubectl command and nothing else.", team.main_agent).solve().content
-        print(f"kek il en pense michel ? {new_cmd}")
-        # Counting the number of quotes that starts the string
-        if len(list(takewhile(lambda x: x in "'\"`", new_cmd))) <= 0 and new_cmd.startswith("kubectl"):
-            print(f"on utilise la nouvelle fonction")
-            return new_cmd
-        else:
-            raise ValueError("LLM failed to remove quotes")
+    new_cmd: str = Task("It seems that the command you generated starts with a quote. Please generate this same command WITHOUT surrounding quotes. I only need the raw kubectl command and nothing else.", team.main_agent).solve().content
+    print(f"kek il en pense michel ? {new_cmd}")
+    # Counting the number of quotes that starts the string
+    if len(list(takewhile(lambda x: x in "'\"`", new_cmd))) <= 0 and new_cmd.startswith("kubectl"):
+        print(f"on utilise la nouvelle fonction")
+        return new_cmd
+    else:
+        raise ValueError("LLM failed to remove quotes")
 
 
 def add_minimal_k8s_help_to_history(main_agent: Agent) -> None:

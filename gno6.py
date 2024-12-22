@@ -4,7 +4,9 @@ import argparse
 from category_factory import CategoryFactory
 from category import Category
 from execute import execute_command_in_place_of_user
+from human_in_the_loop import check_information_presence, look_for_missing_information
 from k8s_utils import add_minimal_k8s_help_to_history
+from memory import Memory
 from qualification import qualify_request
 from team import Team
 
@@ -29,6 +31,7 @@ def main():
 
     args: argparse.Namespace = arg_parsing()
     team: Team = Team(args.model, args.endpoint, args.log_level, args.namespace)
+    memory = Memory()
 
     while True:
         print("How can I assist you with your kubectl commands ?")
@@ -39,6 +42,14 @@ def main():
 
         if category_type == "simple" or category_type == "complex" or category_type == "file":
             add_minimal_k8s_help_to_history(team.main_agent)
+
+        check_information_presence(team.main_agent, user_query)
+        look_for_missing_information(team.main_agent, user_query)
+        memory.inject_all_facts(team.main_agent)
+        print("HUUUUUUUUMMMM HHHUUUUUUUMMMMMM")
+        print(team.main_agent.history.pretty_print())
+        input("Press any key to continue...")
+
         while True:
             category: Category = CategoryFactory.get_category(category_type, user_query, team)
             # Calling function associated to the qualified request
