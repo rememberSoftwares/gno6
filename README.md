@@ -12,6 +12,8 @@ By combining the flexibility of multi-agent frameworks and robust tool-calling c
 
 ---
 
+**This software needs an update to the latest version of Yacana. Stay tuned for a well-earned upgrade.**
+
 ## Key Features
 
 - **Natural Language to kubectl**: Easily converts user queries into actionable `kubectl` commands.
