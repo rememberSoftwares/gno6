@@ -5,6 +5,7 @@ Translating human input as kubectl commands using LLMs powered by [Yacana](https
   <img src="https://github.com/user-attachments/assets/5d2b2402-18d4-4e81-874a-01d16ef4f1b3">
 </p>
 
+**This software needs a refresh! Stay tuned!**
 
 **gno6** is a powerful tool designed to translate natural language queries into valid `kubectl` commands. It leverages a self-correcting mechanism based on the output of `kubectl help`, ensuring high accuracy without relying solely on LLM (Large Language Model) training.
 
