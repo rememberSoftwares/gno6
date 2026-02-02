@@ -1,4 +1,7 @@
+print("Booting...")
+
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter
+import questionary
 import time, subprocess, os
 
 g_last_used_tool: str = None
@@ -7,15 +10,31 @@ def get_config_from_env():
   """
   Validating credentials are present
   """
-  endpoint: str = os.getenv("GNO6_ENDPOINT", None)
-  api_key: str = os.getenv("GNO6_API_KEY", None)
-  model: str = os.getenv("GNO6_MODEL", None)
-  endpoint_provider: str = os.getenv("GNO6_ENDPOINT_PROVIDER", "openai")
-  log_level: str = os.getenv("GNO6_LOG_LEVEL", "INFO")
+  inter = False
+  if (endpoint := os.getenv("GNO6_ENDPOINT", None)) is None:
+    endpoint, inter = questionary.text("What's the LLM endpoint URL (should end with /v1) ?").ask(), True
 
-  if endpoint is None or api_key is None or model is None:
-    raise ValueError("Please set ENV variables `GNO6_ENDPOINT` (LLM endpoint), `GNO6_API_KEY` (authorized api key) and `GNO6_MODEL` (LLM model name)")
-  return (endpoint, api_key, model, endpoint_provider, log_level)
+  if (api_key := os.getenv("GNO6_API_KEY", None)) is None:
+    api_key, inter = questionary.password("What's the api key ?").ask(), True
+
+  if (model := os.getenv("GNO6_MODEL", None)) is None:
+    model, inter = questionary.text("What's the model name ?").ask(), True
+
+  if (provider := os.getenv("GNO6_PROVIDER", None)) is None:
+    provider, inter = questionary.select("What's the provider type", choices=["openai", "ollama"],).ask(), True
+
+  if (log_level := os.getenv("GNO6_LOG_LEVEL", None)) is None:
+    log_level, inter = questionary.select("What log level do you want (choose INFO if unsure) ?", choices=["DEBUG", "INFO", "WARNING"],).ask(), True
+
+  if inter is True:
+    print(f"""Set these ENV variables so you don't have to do this again:
+export GNO6_ENDPOINT={endpoint}
+export GNO6_API_KEY={api_key}
+export GNO6_MODEL={model}
+export GNO6_PROVIDER={provider}
+export GNO6_LOG_LEVEL={log_level}
+""")
+  return (endpoint, api_key, model, provider, log_level)
 
 
 class TaskIsSolved(Exception):
@@ -36,7 +55,7 @@ def call_kubectl_cmd(cmd: str):
   Executes a kubectl command
   """
   g_last_used_tool = "kubectl"
-  print(f"Command to execute => [{cmd}]")
+  print(f"Command to execute\n```\n{cmd}\n```")
   if not isinstance(cmd, str):
     raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
 
@@ -69,13 +88,12 @@ def call_kubectl_cmd(cmd: str):
   # If it's not a 'observation' cmd then ask user for validation
   if split_cmd[1] != "get" and split_cmd[1] != "describe" and split_cmd[1] != "logs":
     while True:
-      answer: str = input("Exec above command ? (y/n)")
-      if answer == "y":
+      confirmed: bool = questionary.confirm("Exec command ?").ask()
+      if confirmed:
         break
-      elif answer == "n":
-        reason: str = input("Reason to give the LLM why you said no.")
+      elif not confirmed:
+        reason: str = questionary.text("Reason to give the LLM why you said no.").ask()
         raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
-
   try:
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
   except subprocess.CalledProcessError as e:
@@ -89,7 +107,7 @@ def ask_question_to_admin(question: str):
   g_last_used_tool = "question"
   if not isinstance(question, str):
     raise ToolError(f"Tool argument `question` MUST be of type string. Got {type(question)}.")
-  return input(f"Question from LLM => [{question}]")
+  return questionary.text(question).ask()
 
 
 def sleep(seconds_to_sleep: int):
@@ -143,7 +161,7 @@ def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level
 * Use `kubectl explain` when getting contradicting or no result commands.
 
 When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
-IMPORTANT: After executing a command reflect on the output. Don't rush an other command immediatly.
+IMPORTANT: When asked if you need another tool, say NO. You'll have other opportunities to call tools later.
 """
   if type == "openai":
     agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint)
@@ -165,8 +183,9 @@ def main():
   tools = init_tools()
 
   while True:
-    print("How can I assist you with your cluster today ?")
-    user_query: str = input("> ")
+    user_query: str = questionary.text("How can I assist you with your cluster today ?").ask()
+    if user_query is None:
+      return 0
 
     try:
       Task(f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action.", main_agent, tools=tools).solve()
