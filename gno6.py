@@ -1,298 +1,183 @@
-from yacana import Agent, Task, Tool, Message, MessageRole, GroupSolve, EndChat, EndChatMode, LoggerManager, ToolError
+from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter
+import time, subprocess, os
 
-import subprocess
-from typing import Callable, List
-import re
-import argparse
+g_last_used_tool: str = None
 
-print("Welcome to GnosisCTL, the smart kubectl CLI helper")
+def get_config_from_env():
+  """
+  Validating credentials are present
+  """
+  endpoint: str = os.getenv("GNO6_ENDPOINT", None)
+  api_key: str = os.getenv("GNO6_API_KEY", None)
+  model: str = os.getenv("GNO6_MODEL", None)
+  endpoint_provider: str = os.getenv("GNO6_ENDPOINT_PROVIDER", "openai")
+  log_level: str = os.getenv("GNO6_LOG_LEVEL", "INFO")
 
-main_agent: Agent = None
-assessment_agent: Agent = None
-logic_agent: Agent = None
-k8s_help_agent: Agent = None
+  if endpoint is None or api_key is None or model is None:
+    raise ValueError("Please set ENV variables `GNO6_ENDPOINT` (LLM endpoint), `GNO6_API_KEY` (authorized api key) and `GNO6_MODEL` (LLM model name)")
+  return (endpoint, api_key, model, endpoint_provider, log_level)
+
+
+class TaskIsSolved(Exception):
+  """
+  Exception raised when the LLM thinks that the current task is solved.
+  """
+
+  def __init__(self, message):
+    self.message = message
+    super().__init__(self.message)
+
+############################
+# Tools for the LLM to use #
+############################
 
 def call_kubectl_cmd(cmd: str):
-    try:
-        return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20,
-                                       universal_newlines=True)
-    except subprocess.CalledProcessError as e:
-        raise ToolError(repr(
-            e.output) + '\nRemember that you must call this tool with a kubectl action and a kubectl resource. For instance: {"action_verb": "get", "resource": "pod"}')
+  """
+  Executes a kubectl command
+  """
+  g_last_used_tool = "kubectl"
+  print(f"Command to execute => [{cmd}]")
+  if not isinstance(cmd, str):
+    raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
+
+  split_cmd = cmd.split(" ")
+  if len(split_cmd) < 3:
+    raise ToolError(f"An automatic validation rule blocked this kubectl command. The command is required to be split in 3 parts: 'kubectl', 'verb' and 'resource'. A command cannot have less than 3 space divided section.")
+
+  if split_cmd[0] != "kubectl":
+    raise ToolError(f"Command must start with 'kubectl'.")
+
+  # Ordering kubectl parameter for easyer parsing
+  if split_cmd[1] == "-n" or split_cmd[1] == "--namespace":
+    endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
+    agent = init_agent(endpoint, api_key, model, endpoint_provider, "WARNING")
+    cmd = Task(f"Please rewrite the kubectl command so that the action (ie: get, patch, etc) is directly after the kubectl keyword and the namespace is at the end. For instance, we want 'kubectl get pod -n <namespace>'.  The command to update: `{cmd}`\nOnly answer with the updated command and nothing else (no quotes either). Just the updated raw kubectl command with its new parameters correctly ordered.", agent).solve().content
+    split_cmd = cmd.split(" ")
+    LoggerManager.set_log_level(log_level)
+
+  if split_cmd[1] == "watch": # Ca ca va poser pb. Car la boucle de validation va quand même réessayer. Sauf si le LLM peut shit sur sleep dans le retry de yacana ?
+    raise ToolError("Verb `watch` is blocked because this particular command doesn't exit. To wait for some specific time use the sleep tool.")
+
+  # Limiting tail output length so the context size stays manageable
+  if split_cmd[1] == "logs" and "--tail" not in cmd:
+    endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
+    agent = init_agent(endpoint, api_key, model, endpoint_provider, "WARNING")
+    cmd = Task(f"Please add the missing --tail=100 in this kubectl command: `{cmd}`\nOnly answer with the updated command and nothing else (no quotes either). Just the updated raw kubectl command with its new tail parameter.", agent).solve().content
+    split_cmd = cmd.split(" ")
+    LoggerManager.set_log_level(log_level)
+
+  # If it's not a 'observation' cmd then ask user for validation
+  if split_cmd[1] != "get" and split_cmd[1] != "describe" and split_cmd[1] != "logs":
+    while True:
+      answer: str = input("Exec above command ? (y/n)")
+      if answer == "y":
+        break
+      elif answer == "n":
+        reason: str = input("Reason to give the LLM why you said no.")
+        raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
+
+  try:
+    return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
+  except subprocess.CalledProcessError as e:
+    raise ToolError(repr(e.output))
 
 
-def get_cmd_help(action_verb: str, resource_type: str) -> str:
-    #print(f"Tool is called with {action_verb} and {resource_type}")
-
-    all_k8s_resources: str = call_kubectl_cmd("kubectl api-resources --no-headers=true")
-
-    pattern = r"(^[a-z]+) +(?:([a-z]+)(?:,?([a-z]+))?)? .* ([A-Za-z]+)$"
-
-    regex = re.compile(pattern, re.MULTILINE)
-    # Find all matches in the string
-    matches = regex.findall(all_k8s_resources)
-    all_kinds: List[str] = [value.lower() for match in matches for value in match if value]
-
-    if not (resource_type.lower() in all_kinds):
-        raise ToolError(f"Invalid value for 'resource_type' parameter. Must be one of these values: {str(all_kinds)}.")
-
-    tmp: str = call_kubectl_cmd(f"kubectl {action_verb} {resource_type} --help")
-    return tmp
+def ask_question_to_admin(question: str):
+  """
+  Prompts the user with a question from the LLM
+  """
+  g_last_used_tool = "question"
+  if not isinstance(question, str):
+    raise ToolError(f"Tool argument `question` MUST be of type string. Got {type(question)}.")
+  return input(f"Question from LLM => [{question}]")
 
 
-def explain_missing_kubectl() -> str:
-    GroupSolve(
-        [Task("It seems like the command you outputted doesn't start with 'kubectl'. Is this normal ?", main_agent),
-         Task(
-             "A kubectl command was created to match the query of a user. However the command did not start with 'kubectl' which seems strange. Investigate why. You task is done when you are sure that the command starts with 'kubectl'.",
-             logic_agent, llm_stops_by_itself=True)],
-        EndChat(EndChatMode.END_CHAT_AFTER_FIRST_COMPLETION, max_iterations=2)).solve()
-    final_cmd: str = Task(
-        "After deliberation what is the final kubectl command ? Only output the command and NOTHING ELSE",
-        main_agent).solve().content
-    return final_cmd
+def sleep(seconds_to_sleep: int):
+  """
+  Sleeps for a period of time so the LLM doesn't have to spam needlessly
+  """
+  g_last_used_tool = "sleep"
+  if not isinstance(seconds_to_sleep, int):
+    raise ToolError(f"Tool argument `question` MUST be of type int. Got {type(seconds_to_sleep)}.")
+  time.sleep(seconds_to_sleep)
 
 
-def add_minimal_k8s_help_to_history(agent: Agent) -> None:
-    all_k8s_cmds: str = call_kubectl_cmd("kubectl --help")
-    agent.history.add(Message(MessageRole.USER,
-                              "To help you answer kubectl related questions I give you the kubectl --help output bellow:\n" + all_k8s_cmds))
-    agent.history.add(Message(MessageRole.ASSISTANT,
-                              "Okay thank you. I will use this piece of information to ground my answers and help me chose the correct kubectl action."))
+def mission_accomplished():
+  """
+  When the task is done, ends the current workflow.
+  """
+  g_last_used_tool = "solved"
+  raise TaskIsSolved("LLM thinks it solved the initial task")
 
 
-def final_command_output(k_nb_occurrences: int) -> str:
-    command = Task(
-        f"Now that you have brainstormed and validated the command{'s' if k_nb_occurrences else ''}. Please output the final version. Only output the command{'s' if k_nb_occurrences else ''} and nothing else.",
-        main_agent).solve().content
-    if not command.startswith("kubectl"):
-        command = explain_missing_kubectl()
-    #print(f"=> {command}")
-    return command
+#################################
+# Initializing tools and agents #
+#################################
 
-############################################### Categories #########################################################
-
-def knowledge_category(user_query: str):
-    print("The request was considered as general knowledge and no command will be proposed. I will "
-          "still try to answer your question.")
-    print("=> ", Task(f"{user_query}", main_agent).solve().content)
+def init_tools():
+  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd)
+  ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin)
+  sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep) # tool_type=ToolType.OPENAI
+  task_is_solved_tool = Tool("task_is_solved", "Call only when the initial task is solved.", mission_accomplished)
+  return [kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool]
 
 
-def simple_category(user_query: str, max_iter=2) -> str:
-    print("Thinking...")
-    command: str = Task(
-        f"I will give you a user query in natural language about Kubernetes. Your task is to transform the query into a valid kubectl command based on your knowledge. ONLY output the query and nothing more. <user_query>{user_query}</user_query>.",
-        main_agent).solve().content
-    command = command.strip()
-    if not command.startswith("kubectl"):
-        command = explain_missing_kubectl()
-    print(f"\nInitial kubectl command proposition: `{command}`\n")
-    print("Validating command with output of 'kubectl help'...")
+def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
+  system_prompt="""You are a helpful AI assistant expert on kubernetes and kubectl. You job is to fulfill a kubernetes related task given by the cluster admin. To help you fulfill the task you have access to a kubectl tool letting you interact with the cluter. Use it wisely. When debbuging, always follow this approch:
 
-    k_nb_occurrences: int = command.count("kubectl")
+# PLANIFICATION PHASE
+* Always plan your tasks in advance.
 
-    get_help_task: Task = Task(
-        #You must evaluate the validity of the following kubectl command(s)
-        f"I will give you an unknown string that may contain one or more kubectl commands. You must use the 'kubectl_help' tool for each kubectl command you find in that string. Your task is finished when the tool has been called on all kubectl commands. The string is <unknown_string>{command}</unknown_string>",
-        k8s_help_agent,
-        tools=[Tool("kubectl_help",
-                    "Outputs the syntax help from 'kubectl <action_verb> <resource_type> --help'.",
-                    get_cmd_help,
-                    usage_examples=[{"action_verb": "get", "resource_type": "deployment"}])])
+# SCOUTING PHASE
+* Extensively list resources that might help using `kubectl get <resource-kind>` -n <namespace>.
+* Always look at YAML resources configuration using `kubectl get <resource-kind> <resource-name> -n <namespce> -o yaml`
+* Read last pods logs using `kubectl logs <resource-name> --tail=200 -n <namespace>`
+* Do not list the whole cluster as YAML because your context is limited. Choose what resource specificaly interests you.
 
-    #print("-----------------------ALL HELP COMMANDS-----------------------")
-    #print(get_help_task.solve().content)
+# ANALYSING PHASE
+* Think of what information you gathered and update your plan accordingly
 
-    cmd_and_help: str = ""
-    if k_nb_occurrences == 1:
-        cmd_and_help = "$ " + command + "\n" + k8s_help_agent.history.get_last().content
-    else:
-        cmd_and_help = Task("Based on your previous answer. Aggregate the outputs of all kubectl commands and their associated help output. It should look like this : ```\n$ <kubectl_command>\n<help output from the tool>\n---\n$ <kubectl_command>\n<help output from the tool>\n```", k8s_help_agent).solve().content
+# TAKING ACTION PHASE
+* Now that you know how to fulfill the user's request take action.
+* Use kubectl commands to update resources. You can use verbs like patch, scale, rollout etc.
+* Use `kubectl explain` when getting contradicting or no result commands.
 
-    #print("############# command and help ###################")
-    #print(cmd_and_help)
-    #print("#############End command and help")
+When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
+IMPORTANT: After executing a command reflect on the output. Don't rush an other command immediatly.
+"""
+  if type == "openai":
+    agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint)
+  elif type == "ollama":
+    agent = OllamaAgent("AI assistant", model, endpoint=endpoint, system_prompt=system_prompt)
+  else:
+    raise ValueError("Agent type can either be `openai` or `ollama`")
 
+  LoggerManager.set_log_level(logging_level)
+  return agent
 
-    Task(f"Your new task is to evaluate if the command{'s' if k_nb_occurrences > 1 else ''} you generated ('{command}') {'are' if k_nb_occurrences > 1 else 'is'} in accordance with the initial query of the user. I will provide the result of the associated 'kubectl <cmd> --help' in my next message. You must reflect on the command you chose and if it really matches the user's request.", main_agent).solve()
-    Task(f"The query of the user was <user_query>{user_query}</user_query>.\nThe 'kubectl cmd --help' output of your chosen command{'s' if k_nb_occurrences > 1 else ''} is given bellow:\n{cmd_and_help}", main_agent).solve()
-
-    if max_iter <= 0:
-        return final_command_output(k_nb_occurrences)
-
-    restart_flow_router: str = Task("To summarize your previous answer in one word. Do you need to rework the command you initially generated ? Answer ONLY by 'yes' or 'no'.", main_agent, forget=True).solve().content
-    if "yes" in restart_flow_router.lower():
-        main_agent.history.add(Message(MessageRole.USER, "Okay, if the command you generated is not a perfect match we will start over the whole process from the beginning. Be sure not to make the same mistake twice."))
-        main_agent.history.add(Message(MessageRole.SYSTEM, "Sure, let's start again. This time I will make sure to use the correct arguments and kubectl verbs using the knowledge I gained."))
-        max_iter -= 1
-        print("After reviewing 'kubectl help' I'm not happy with the proposed command. Let's try again.")
-        return simple_category(user_query, max_iter)
-    else:
-        return final_command_output(k_nb_occurrences)
-
-
-def complex_category(user_query: str):
-    simple_category(user_query)
-
-
-def file_category(user_query: str):
-    raise NotImplemented("You requested file interactions like applying a Kubernetes manifest. This is not yet implemented. However we are working on it! ^^\nSorry for the inconvenience.")
-
-
-def unrelated_category(user_query: str):
-    print("I acknowledge this information but won't output any kubectl commands. Still, I'll try to help you with your request.")
-    llm_answer: str = Task(f"{user_query}", main_agent).solve().content
-    return llm_answer
-
-def get_request_qualification(max_iter: int = 4) -> str:
-    uid_from_llm: str = Task(
-        "To summarize your previous answer in one word. What was the category uid you chose. Only output the category uid.",
-        assessment_agent).solve().content
-    uid_from_llm = uid_from_llm.replace("'", "").replace('"', "")
-    real_uid: str = next((qual["uid"] for qual in query_qualification if uid_from_llm.lower() in qual["uid"]), None)
-    if max_iter <= 0:
-        raise SystemExit("Reached max iteration during qualification")
-    if real_uid is None:
-        Task(
-            f"You didn't only output one of the categories. You must choose one of {','.join([qual['uid'] for qual in query_qualification])} and output ONLY the category you chose.",
-            assessment_agent).solve()
-        max_iter -= 1
-        real_uid = get_request_qualification(max_iter=max_iter)
-    return real_uid
-
-
-def init_agents(model: str, endpoint: str, logging_level) -> None:
-    global main_agent
-    global assessment_agent
-    global logic_agent
-    global k8s_help_agent
-
-    main_agent = Agent("main_agent", model,
-                       system_prompt="You are a helpful AI assistant expert on kubectl commands and kubernetes clusters. Your end goal is to generate a valid kubectl command based on the user query.", endpoint=endpoint)
-    assessment_agent = Agent("Assessment_agent", model,
-                             system_prompt="You are an AI assistant with the goal to qualify user requests into predefined categories.", endpoint=endpoint)
-    logic_agent = Agent("Logic_agent", model,
-                        system_prompt="You are an AI assistant that reflects on other's problematic by asking question and ensuring that the response given in return is logic.", endpoint=endpoint)
-    k8s_help_agent = Agent("K8s_validator", model,
-                           system_prompt="You are an AI assistant that can access kubectl command line help. You make sure that kubectl commands are valid and help refacto them if needed.", endpoint=endpoint)
-    LoggerManager.set_log_level(None if logging_level == "None" else logging_level)
-
-
-def reset_agents(agents: List[Agent]) -> None:
-    for agent in agents:  # if we keep that we loose the knowledge history. So maybe the function that treats this part should be added to the main_agent after the clean
-        agent.history.clean()
-
-
-def arg_parsing() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Process some model and endpoint parameters.")
-
-    # Define optional named parameters with default values
-    parser.add_argument('--model', type=str, default='llama3.1:8b', help='Specify the model name (default: llama3.1:8b)')
-    parser.add_argument('--endpoint', type=str, default='http://127.0.0.1:11434', help='Specify the endpoint (default: http://127.0.0.1:11434)')
-    parser.add_argument('--log-level', type=str, default=None, help='Specify the default logging level. [None, DEBUG, INFO, WARNING WARN, ERROR] (default: None)')
-
-    # Parse the arguments
-    return parser.parse_args()
-
-
-def exec_kubectl_cmd(kubectl_cmd: str) -> str:
-    try:
-        # result = subprocess.run(final_cmd, shell=True, check=True, text=True, capture_output=True, stderr=subprocess.STDOUT)
-        result = subprocess.check_output(kubectl_cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
-        if not any(char.isalpha() or char.isdigit() for char in result):
-            raise RuntimeError(
-                f"Error: kubectl command returned an empty string. {'If the jsonpath expression is wrong it may return an empty result. The problem might come from there.' if 'jsonpath' in kubectl_cmd else ''}")
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(repr(e.output))
-    return result
-
-
-def execute_command_in_place_of_user(k8s_cmd: str) -> bool:
-    """
-
-    :param k8s_cmd:
-    :return: bool : Success or failure
-    """
-    print("\nShould I execute the command for you?")
-    should_execute: str = input("> ")
-    router: str = Task("The user was asked a 'yes'/'no' question. Determine what was his choice and ONLY output 'yes' if it was affirmative else ONLY output 'no'.", main_agent, forget=True).solve().content
-    if "yes" in router.lower():
-        try:
-            cmd_output = exec_kubectl_cmd(k8s_cmd)
-        except RuntimeError as e:
-            cmd_output = str(e)
-            print("ERROR occurred :-(")
-        print('\n\033[96m' + cmd_output + '\033[0m')
-        Task(f"Your task is to asses the output of execution of this kubectl command: `{k8s_cmd}`\nYou must determine if the execution is a success or a failure. The output is the following: {cmd_output}", main_agent).solve()
-        router: str = Task("Was the command a complete success ? Answer ONLY by 'yes' or by 'no'", main_agent, forget=True).solve().content
-        if "yes" in router.lower():
-            print("\nCommand execution was a success.")
-        else:
-            print("Command execution was a failure. Let's analyse what when wrong!")
-            error_summary = Task("Write a very brief summary of what went wrong in your opinion.", main_agent).solve().content
-            print(error_summary)
-            return False
-    return True
-
-
-query_qualification = [
-    {
-        'uid': 'general',
-        'description': 'Asking for general kubernetes knowledge.',
-        'ref': knowledge_category
-    },
-    {
-        'uid': 'simple',
-        'description': 'Simple query easily answered with only one kubectl command.',
-        'ref': simple_category
-    },
-    {
-        'uid': 'complex',
-        'description': 'Complex query that might involve multiple kubectl commands, maybe bash syntax or even human input.',
-        'ref': complex_category
-    },
-    {
-        'uid': 'file',
-        'description': 'Will definitely need a file to write YAML into and then maybe apply it.',
-        'ref': file_category
-    },
-    {
-        'uid': 'unrelated',
-        'description': 'Has nothing to do with Kubernetes. Is off kubernetes topic.',
-        'ref': unrelated_category
-    }
-]
-
-
+###################
+# Main logic loop #
+###################
 
 def main():
+  endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
+  main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
+  tools = init_tools()
 
-    args: argparse.Namespace = arg_parsing()
-    init_agents(args.model, args.endpoint, args.log_level)
-    agents: List[Agent] = [main_agent, assessment_agent, logic_agent, k8s_help_agent]
+  while True:
+    print("How can I assist you with your cluster today ?")
+    user_query: str = input("> ")
 
-    while True:
-        print("How can I assist you with your kubectl commands ?")
-        user_query: str = input("> ")
-        print("Preparing...")
-        query_qualification_stripped = [{k: v for k, v in item.items() if k != 'ref'} for item in query_qualification]
-        Task(
-            f"I will give you the request of a user. You must qualify what the request is about and chose a category that best matches the query. The categories are defined in JSON : {query_qualification_stripped}.\nThe user's query is the following: <user_query>{user_query}</user_query>. In your opinion what category best matches the request ? Explain your reasoning.",
-            assessment_agent).solve()
-        uid: str = get_request_qualification()
-        if uid == "simple" or uid == "complex" or uid == "file":
-            add_minimal_k8s_help_to_history(main_agent)
-        while True:
-            ref: Callable = next((qual["ref"] for qual in query_qualification if qual["uid"] == uid), None)
-            final_answer: str = ref(user_query)
-            print('\n\033[96m' + final_answer + '\033[0m')
+    try:
+      Task(f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action.", main_agent, tools=tools).solve()
+      input("on est passé 1!>")
+      while True:
+        Task("Carry on.", main_agent, tools=tools).solve()
+        input("on est passé 2!>")
+    except TaskIsSolved:
+      print("LLM thinks that the original task is solved.\nDo you confirm that it is ?")
+      answer: str = input("(y/n) >")
+      continue
 
-            success: bool = execute_command_in_place_of_user(final_answer)
-            if success is False:
-                Task("Let's try to find a better kubectl command using the error output we got.", main_agent).solve()
-            else:
-                break
-
-        reset_agents(agents)
 
 main()
