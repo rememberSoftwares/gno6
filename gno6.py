@@ -1,10 +1,19 @@
 print("Booting...")
 
-from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter
+from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
 import questionary
 import time, subprocess, os
+from enum import Enum
 
-g_last_used_tool: str = None # changer en historique de cmd
+
+class CustomTool(Enum):
+    KUBECTL = 1
+    ASK_QUESTION = 2
+    SLEEP = 3
+    SOLVED_TASK = 4
+
+
+g_used_tools: list[CustomTool] = []
 
 def get_config_from_env():
   """
@@ -54,7 +63,7 @@ def call_kubectl_cmd(cmd: str):
   """
   Executes a kubectl command
   """
-  g_last_used_tool = "kubectl"
+  g_used_tools.append(CustomTool.KUBECTL)
   print(f"Command to execute\n```\n{cmd}\n```")
   if not isinstance(cmd, str):
     raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
@@ -104,7 +113,7 @@ def ask_question_to_admin(question: str):
   """
   Prompts the user with a question from the LLM
   """
-  g_last_used_tool = "question"
+  g_used_tools.append(CustomTool.ASK_QUESTION)
   if not isinstance(question, str):
     raise ToolError(f"Tool argument `question` MUST be of type string. Got {type(question)}.")
   return questionary.text(question).ask()
@@ -114,7 +123,7 @@ def sleep(seconds_to_sleep: int):
   """
   Sleeps for a period of time so the LLM doesn't have to spam needlessly
   """
-  g_last_used_tool = "sleep"
+  g_used_tools.append(CustomTool.SLEEP)
   if not isinstance(seconds_to_sleep, int):
     raise ToolError(f"Tool argument `question` MUST be of type int. Got {type(seconds_to_sleep)}.")
   time.sleep(seconds_to_sleep)
@@ -124,7 +133,7 @@ def mission_accomplished():
   """
   When the task is done, ends the current workflow.
   """
-  g_last_used_tool = "solved"
+  g_used_tools.append(CustomTool.SOLVED_TASK)
   raise TaskIsSolved("LLM thinks it solved the initial task")
 
 
@@ -161,7 +170,6 @@ def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level
 * Use `kubectl explain` when getting contradicting or no result commands.
 
 When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
-IMPORTANT: When asked if you need another tool, say NO. You'll have other opportunities to call tools later.
 """
   if type == "openai":
     agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint)
@@ -172,6 +180,54 @@ IMPORTANT: When asked if you need another tool, say NO. You'll have other opport
 
   LoggerManager.set_log_level(logging_level)
   return agent
+
+
+def compact_history(agent):
+  recap: str = Task("""Let's recap all steps that you went through and their associated results. To do so create an ordered list following this format:
+* 1) <Subtask title>
+Command: `<kubectl command that was done>`
+Relevant ouput:
+```
+<Meaningful output from the command. Only keep what is relevant.>
+```
+Conclusion: <Conclusions from the output>
+
+---
+
+Example when looking for a resource:
+* 1) Looking for target pod.
+Command `kubectl get pod -n mynamespace`
+Relevant output:
+```
+NAME        READY   STATUS    RESTARTS   AGE
+my-pod      1/1     Running   0          12d
+```
+Conclusion: Pod has been found in namespace mynamespace and is running.
+
+---
+
+Example with a `kubectl logs`:
+* 1) Searching for root cause inside logs of pod my-pod.
+Command: `kubectl logs my-pod -n mynamespace`
+Meaningful output:
+```
+14:00-Booting app
+14:00-OutOfMemory exception
+```
+Conclusion: Logs show that the Pod may be running out of memory.
+
+---
+
+Final instructions: Do not make things up. Ground your answer based on this conversation.
+""", agent).solve().content
+  tagged_messages = agent.history.get_messages_by_tags("kubectl")
+  for tagged_msg in tagged_messages:
+    agent.history.delete_message(tagged_msg)
+  agent.history.pretty_print()
+  agent.history.add_message(Message(MessageRole.USER, "Let's recap all operations that have already be done.", ["compact"]))
+  agent.history.add_message(Message(MessageRole.ASSISTANT, recap, ["compact"]))
+  print("------------------------------")
+  agent.history.pretty_print()
 
 ###################
 # Main logic loop #
@@ -190,16 +246,22 @@ def main():
 
     try:
       while True:
-        prompt: str = "Cary on." if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
-        Task(prompt, main_agent, tools=[kubectl_tool]).solve()
+        prompt: str = "Do you need to exec another command ?" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
+        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool], tags=["kubectl"]).solve()
         init = False
-        Task("Do you have a question to ask or need to sleep for a period of time ?", main_agent, tools=[ask_question_tool, sleep_tool]).solve()
-        Task("In your opinion, is the initial task solved ?", main_agent, tools=[task_is_solved_tool]).solve()
+
+        Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool]).solve()
+        Task("In your opinion, is the initial task solved or should you keep working ?", main_agent, tools=[task_is_solved_tool], forget=True).solve()
+
+        #print("BBBBBBBBBBBBBBBBBBBBBBBBBBLLLLLLLLLLLLLLLAAAAHHH", main_agent.history.get_token_count())
+        if main_agent.history.get_token_count() > 1000:
+          compact_history(main_agent)
 
     except TaskIsSolved:
-      print("LLM thinks that the original task is solved.\nDo you confirm that it is ?")
-      answer: str = input("(y/n) >")
-      continue
-
+      answer: bool = questionary.confirm("LLM thinks that the original task is solved.")
+      if answer is True:
+        continue
+      else:
+        pass
 
 main()
