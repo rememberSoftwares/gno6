@@ -4,7 +4,7 @@ from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, Gene
 import questionary
 import time, subprocess, os
 
-g_last_used_tool: str = None
+g_last_used_tool: str = None # changer en historique de cmd
 
 def get_config_from_env():
   """
@@ -133,11 +133,11 @@ def mission_accomplished():
 #################################
 
 def init_tools():
-  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd)
+  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, optional=True)
   ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin)
   sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep) # tool_type=ToolType.OPENAI
-  task_is_solved_tool = Tool("task_is_solved", "Call only when the initial task is solved.", mission_accomplished)
-  return [kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool]
+  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, optional=True)
+  return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool)
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
@@ -179,20 +179,23 @@ IMPORTANT: When asked if you need another tool, say NO. You'll have other opport
 
 def main():
   endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-  main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
-  tools = init_tools()
+  kubectl_tool, ask_question_tool, sleep_tool, task_is_solved_tool = init_tools()
 
   while True:
+    init: bool = True
+    main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
     user_query: str = questionary.text("How can I assist you with your cluster today ?").ask()
     if user_query is None:
       return 0
 
     try:
-      Task(f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action.", main_agent, tools=tools).solve()
-      input("on est passé 1!>")
       while True:
-        Task("Carry on.", main_agent, tools=tools).solve()
-        input("on est passé 2!>")
+        prompt: str = "Cary on." if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
+        Task(prompt, main_agent, tools=[kubectl_tool]).solve()
+        init = False
+        Task("Do you have a question to ask or need to sleep for a period of time ?", main_agent, tools=[ask_question_tool, sleep_tool]).solve()
+        Task("In your opinion, is the initial task solved ?", main_agent, tools=[task_is_solved_tool]).solve()
+
     except TaskIsSolved:
       print("LLM thinks that the original task is solved.\nDo you confirm that it is ?")
       answer: str = input("(y/n) >")
