@@ -2,7 +2,7 @@ print("Booting...")
 
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
 import questionary
-import time, subprocess, os
+import time, subprocess, os, uuid
 from enum import Enum
 
 
@@ -142,10 +142,10 @@ def mission_accomplished():
 #################################
 
 def init_tools():
-  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, optional=True)
-  ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin)
-  sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep) # tool_type=ToolType.OPENAI
-  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, optional=True)
+  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, optional=True, tool_type=ToolType.OPENAI)
+  ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, tool_type=ToolType.OPENAI, optional=True)
+  sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
+  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, optional=True, tool_type=ToolType.OPENAI)
   return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool)
 
 
@@ -172,7 +172,7 @@ def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level
 When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
 """
   if type == "openai":
-    agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint)
+    agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint, system_prompt=system_prompt)
   elif type == "ollama":
     agent = OllamaAgent("AI assistant", model, endpoint=endpoint, system_prompt=system_prompt)
   else:
@@ -240,21 +240,26 @@ def main():
   while True:
     init: bool = True
     main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
-    user_query: str = questionary.text("How can I assist you with your cluster today ?").ask()
+    user_query: str = questionary.text("How may I help with your cluster ?").ask()
     if user_query is None:
       return 0
 
+    Task("We want to make sure that the given task has a clear final objective. How do you know that you have achieved/finished the task ? It has to be clear ! So, if you have a question, you can ask it using a tool. On the other hand, if the original task is clear and you understand what is expected from you then then we're good and you'll be able to start working next.", main_agent, tools=[ask_question_tool])
+
     try:
       while True:
-        prompt: str = "Do you need to exec another command ?" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
-        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool], tags=["kubectl"]).solve()
+        uid: str = str(uuid.uuid4())
+        prompt: str = "Do you need to use a tool" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
+        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool, ask_question_tool], tags=["kubectl", uid]).solve()
         init = False
 
-        Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool]).solve()
-        Task("In your opinion, is the initial task solved or should you keep working ?", main_agent, tools=[task_is_solved_tool], forget=True).solve()
+        #Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool], tags=[uid]).solve()
+        Task("In your opinion, is the initial task solved or should you keep working ?", main_agent, tools=[task_is_solved_tool], tags=[uid]).solve()
 
-        #print("BBBBBBBBBBBBBBBBBBBBBBBBBBLLLLLLLLLLLLLLLAAAAHHH", main_agent.history.get_token_count())
-        if main_agent.history.get_token_count() > 1000:
+        #Task("", main_agent, tags=[uid])
+
+        #print("Token count", main_agent.history.get_token_count())
+        if main_agent.history.get_token_count() > 10000:
           compact_history(main_agent)
 
     except TaskIsSolved:
