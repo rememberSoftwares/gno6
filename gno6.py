@@ -107,7 +107,8 @@ def call_kubectl_cmd(cmd: str):
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
   except subprocess.CalledProcessError as e:
     raise ToolError(repr(e.output))
-
+  except subprocess.TimeoutExpired as e:
+    return f"Command timed out after {e.timeout}s: {cmd}"
 
 def ask_question_to_admin(question: str):
   """
@@ -142,10 +143,10 @@ def mission_accomplished():
 #################################
 
 def init_tools():
-  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, optional=True, tool_type=ToolType.OPENAI)
-  ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, tool_type=ToolType.OPENAI, optional=True)
-  sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
-  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, optional=True, tool_type=ToolType.OPENAI)
+  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+  ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True)
+  sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
+  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
   return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool)
 
 
