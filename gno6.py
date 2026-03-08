@@ -1,4 +1,4 @@
-print("""
+print(r"""
   ______   __    __   ______    ______  
  /      \ |  \  |  \ /      \  /      \ 
 |  $$$$$$\| $$\ | $$|  $$$$$$\|  $$$$$$\ 
@@ -27,6 +27,9 @@ sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[K")
 
+CYAN = "\033[36m"
+RESET = "\033[0m"
+
 class CustomTool(Enum):
     KUBECTL = 1
     ASK_QUESTION = 2
@@ -35,6 +38,7 @@ class CustomTool(Enum):
 
 
 g_used_tools: list[CustomTool] = []
+g_print_tool_output = False
 
 def get_config_from_env():
   """
@@ -54,7 +58,7 @@ def get_config_from_env():
     provider, inter = questionary.select("What's the provider type", choices=["openai", "ollama"],).ask(), True
 
   if (log_level := os.getenv("GNO6_LOG_LEVEL", None)) is None:
-    log_level, inter = questionary.select("What log level do you want (choose INFO if unsure) ?", choices=["DEBUG", "INFO", "WARNING"],).ask(), True
+    log_level, inter = questionary.select("What log level do you want ?", choices=["DEFAULT", "INFO"]).ask(), True
 
   if inter is True:
     print(f"""Set these ENV variables so you don't have to do this again:
@@ -85,7 +89,7 @@ def call_kubectl_cmd(cmd: str):
   Executes a kubectl command
   """
   g_used_tools.append(CustomTool.KUBECTL)
-  print(f"Command to execute\n```\n{cmd}\n```")
+  print(f"```\n{cmd}\n```")
   if not isinstance(cmd, str):
     raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
 
@@ -125,7 +129,10 @@ def call_kubectl_cmd(cmd: str):
         reason: str = questionary.text("Reason to give the LLM why you said no.").ask()
         raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
   try:
-    return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
+    output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
+    if g_print_tool_output:
+      print(f"{CYAN}{output}{RESET}")
+    return output
   except subprocess.CalledProcessError as e:
     raise ToolError(repr(e.output))
   except subprocess.TimeoutExpired as e:
@@ -148,6 +155,8 @@ def sleep(seconds_to_sleep: int):
   g_used_tools.append(CustomTool.SLEEP)
   if not isinstance(seconds_to_sleep, int):
     raise ToolError(f"Tool argument `question` MUST be of type int. Got {type(seconds_to_sleep)}.")
+  if g_print_tool_output:
+    print(f"Sleeping {seconds_to_sleep} seconds.")
   time.sleep(seconds_to_sleep)
 
 
@@ -172,6 +181,7 @@ def init_tools():
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
+  global g_print_tool_output
   system_prompt="""You are a helpful AI assistant expert on kubernetes and kubectl. You job is to fulfill a kubernetes related task given by the cluster admin. To help you fulfill the task you have access to a kubectl tool letting you interact with the cluter. Use it wisely. When debbuging, always follow this approch:
 
 # PLANIFICATION PHASE
@@ -200,7 +210,9 @@ When requiring more information about an issue or needing help, you can ask ques
   else:
     raise ValueError("Agent type can either be `openai` or `ollama`")
 
+  logging_level = "WARNING" if logging_level == "DEFAULT" else logging_level
   LoggerManager.set_log_level(logging_level)
+  g_print_tool_output = True if logging_level == "WARNING" else False
   return agent
 
 
