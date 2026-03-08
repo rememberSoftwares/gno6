@@ -1,2 +1,2 @@
-yacana
+yacana>=0.4.2
 questionary

@@ -1,10 +1,31 @@
+print("""
+  ______   __    __   ______    ______  
+ /      \ |  \  |  \ /      \  /      \ 
+|  $$$$$$\| $$\ | $$|  $$$$$$\|  $$$$$$\ 
+| $$ __\$$| $$$\| $$| $$  | $$| $$___\$$ 
+| $$|    \| $$$$\ $$| $$  | $$| $$    \ 
+| $$ \$$$$| $$\$$ $$| $$  | $$| $$$$$$$\ 
+| $$__| $$| $$ \$$$$| $$__/ $$| $$__/ $$ 
+ \$$    $$| $$  \$$$ \$$    $$ \$$    $$ 
+  \$$$$$$  \$$   \$$  \$$$$$$   \$$$$$$ 
+                                        
+                                        
+                                        
+""")
+print("Powered by Yacana (https://remembersoftwares.github.io/yacana)")
+print("")
 print("Booting...")
 
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
 import questionary
 import time, subprocess, os, uuid
 from enum import Enum
+import sys
 
+sys.stdout.write("\033[F")
+sys.stdout.write("\033[F")
+sys.stdout.write("\033[F")
+sys.stdout.write("\033[K")
 
 class CustomTool(Enum):
     KUBECTL = 1
