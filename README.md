@@ -31,18 +31,23 @@ It should be safe to use anywhere but refrain from using this on any production 
 
 ## Installation
 
-1. Clone the repository:
+1. Install pipx:  
+```
+sudo apt install pipx
+```
+
+2. Clone the repository:  
 ```bash
 git clone https://github.com/RememberSoftwares/gno6.git
 cd gno6
+pipx install .
 ```
+To get faster dependy build, you should be using [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
+3. Run:  
 ```
-
-To get faster dependy build you should be using [uv](https://docs.astral.sh/uv/getting-started/installation/).
+gno6
+```
 
 ---
 
