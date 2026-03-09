@@ -36,7 +36,7 @@ cd gno6
 
 2. **Install pipx or UV (You really should be using UV !)**
 
-https://docs.astral.sh/uv/getting-started/installation/  
+[UV install](https://docs.astral.sh/uv/getting-started/installation/)  
 
 or  
 ```
