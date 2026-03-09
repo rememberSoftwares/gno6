@@ -7,19 +7,16 @@ A kubernetes agent that yields kubectl. Powered by [Yacana](https://remembersoft
 
 **This software is work in progress! Stay tuned!**
 
-**gno6** is a powerful tool designed to translate natural language queries into kubernetes workflows.  
-You can ask gno6 to investigate any buggy resource and to fix it.  
+Gno6 is a powerful Kubernetes agent design to investigate and fix issues on your behalf.  
 Investigation is automatic but requires human validation for any command that is not about getting/listing resources.  
-It should be safe to use anywhere but refrain from using this on any production clusters anyway.
+It should be safe to use anywhere but refrain from using this on any production clusters before we get to beta.
 
 ---
 
-**This software needs an unpublished version of Yacana. Update will come shortly.**
-
 ## Key Features
 
-- **Kubernetes based workflows**: Built specificaly for kubernetes needs. This agent already knows the steps to debug clusters. Ask it anything and it will start working while you drink mojito.
-- **Automatic kubectl command apply**: Don't need to paste your own kubectl outputs into chatGPT. The LLM will make it's own commands and use the output accordingly.
+- **Kubernetes based workflows**: Built specificaly for kubernetes needs. This agent already knows the steps to debug clusters. Ask it anything and it will start working while you drink mojitos.
+- **Automatic kubectl command apply**: Don't need to paste kubectl commands from chatGPT. The LLM will make it's own commands and use the output accordingly.
 - **Asks user when question arises**: When the LLM is unsure how to proceed or needs some piece of information, it will ask you directly.
 
 ---
@@ -31,31 +28,43 @@ It should be safe to use anywhere but refrain from using this on any production 
 
 ## Installation
 
-1. Install pipx:  
-```
-sudo apt install pipx
-```
-
-2. Clone the repository:  
+1. **Clone the repository:**  
 ```bash
 git clone https://github.com/RememberSoftwares/gno6.git
 cd gno6
+```
+
+2. **Install pipx or UV (You really should be using UV !)**
+
+[UV install]("https://docs.astral.sh/uv/getting-started/installation/")  
+
+or  
+```
+# Install pipx:
+sudo apt install pipx
+```
+
+3. **Install Gno6:**
+```
+# Using UV
+uv tool install . --python 3.12
+
+# Using pipx
 pipx install .
 ```
-To get faster dependy build, you should be using [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-3. Run:  
+4. **Run:**  
 ```
 gno6
 ```
 
-⚠️ You'll need to downgrade from python 3.14 to 3.12 as Pydantic has issues with 3.14. This will be patched. Stay tuned.
+⚠️ Python3.14 is not supported because of Pydantic. If you don't want to downgrade your whole system, use UV ! It will deal with python versions for you.
 
 ---
 
 ## Configuration
 
-*Starting the CLI will auto generate these variables so you don't have to set them yourself. Still, here they are...*
+**Starting the CLI will auto generate these variables so you don't have to set them yourself. Still, here they are...**
 
 ### **Mandatory** ENV variables:  
 
@@ -82,6 +91,11 @@ export GNO6_ENDPOINT_PROVIDER=<provider>
 ```
 Available values are *openai*(default) and *ollama* (untested for now)  
 
+## Roadmap
+
+* Add window size attention
+* Keep conversations history
+* Use a config file instead of ENV
 
 ## License
 
