@@ -49,6 +49,8 @@ To get faster dependy build, you should be using [uv](https://docs.astral.sh/uv/
 gno6
 ```
 
+⚠️ You'll need to downgrade from python 3.14 to 3.12 as Pydantic has issues with 3.14. This will be patched. Stay tuned.
+
 ---
 
 ## Configuration
