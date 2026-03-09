@@ -51,30 +51,34 @@ gno6
 
 ---
 
-## Usage
+## Configuration
 
-**Mandatory** ENV variables:  
+*Starting the CLI will auto generate these variables so you don't have to set them yourself. Still, here they are...*
 
+### **Mandatory** ENV variables:  
+
+* Set LLM endpoint and creds
 ```bash
 export GNO6_ENDPOINT=<endpoint>
 export GNO6_API_KEY=<api_key>
 export GNO6_MODEL=<model_name>
 ```
 
-*Endpoint should end with `/v1` if using openai.*
+*Endpoint should end with `/v1` if using openai.*  
 
-**Optionnal** ENV variables:  
+### **Optionnal** ENV variables:  
+
+* Set logging levels
 ```
 export GNO6_LOG_LEVEL=<log_levev>
 ```
-Available values are *DEBUG*, *INFO* (default) and *WARNING*
+Available values are *DEBUG*, *INFO* and *WARNING* (default)
 
+* Set llm API type
 ```
 export GNO6_ENDPOINT_PROVIDER=<provider>
 ```
-Available values are *openai*(default) and *ollama* (untested for now)
-
-Once installed, you can start gno6 with  `python3 gno6.py`:
+Available values are *openai*(default) and *ollama* (untested for now)  
 
 
 ## License
