@@ -1,3 +1,10 @@
+if __name__ == "__main__" and __package__ is None:
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    __package__ = "gno6"
+
 print(r"""
   ______   __    __   ______    ______  
  /      \ |  \  |  \ /      \  /      \ 
@@ -13,7 +20,7 @@ print(r"""
                                         
 """)
 print("Powered by Yacana (https://remembersoftwares.github.io/yacana)")
-print("")
+print("alpha2.1")
 print("Booting...")
 
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
@@ -22,10 +29,9 @@ import time, subprocess, os, uuid
 from pathlib import Path
 from enum import Enum
 import sys
-from llm_fs_tools import (FilesystemToolbox, ToolError)
-from kubectl_tools import *
-import config
-
+from .llm_fs_tools import (FilesystemToolbox, ToolError)
+from .kubectl_tools import *
+from . import config
 
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
@@ -33,9 +39,9 @@ sys.stdout.write("\033[F")
 sys.stdout.write("\033[K")
 
 
-CYAN = "\033[36m"
-RESET = "\033[0m"
-GREEN = "\033[32m"
+#CYAN = "\033[36m"
+#RESET = "\033[0m"
+#GREEN = "\033[32m"
 
 class CustomTool(Enum):
     KUBECTL = 1
@@ -92,7 +98,7 @@ def mission_accomplished(final_report: str):
   """
   When the task is done, ends the current workflow.
   """
-  print(f"{GREEN}{final_report}{RESET}")
+  print(f"{ANSI_GREEN}{final_report}{ANSI_RESET}")
   raise TaskIsSolved("LLM thinks it solved the initial task")
 
 
@@ -264,6 +270,7 @@ def main():
         continue
       else:
         pass
+
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,8 @@
 import questionary
 import time, subprocess
-import config
 from yacana import ToolError
-from utils import *
+from .utils import *
+from . import config
 
 def call_helm_cmd(cmd: str):
   print(f"```\n{cmd}\n```")

@@ -25,9 +25,8 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 import questionary
-import config
-from utils import *
-
+from .utils import *
+from . import config
 
 class ToolError(Exception):
     """Exception raised for tool-specific errors (invalid input, OOB, permission, etc.)."""

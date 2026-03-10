@@ -4,10 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gno6"
-version = "0.1.0"
+version = "0.2.1"
 description = "Kubernetes agent"
 requires-python = ">=3.10,<3.14"
-dependencies = ["yacana>=0.4.2", "questionary"]
+dependencies = [
+    "yacana>=0.4.2",
+    "questionary"
+]
 
 [project.scripts]
-gno6 = "gno6:main"
+gno6 = "gno6.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
