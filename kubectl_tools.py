@@ -1,11 +1,11 @@
 import questionary
 import time, subprocess
+import config
 
 def call_kubectl_cmd(cmd: str):
   """
   Executes a kubectl command
   """
-  g_used_tools.append(CustomTool.KUBECTL)
   print(f"```\n{cmd}\n```")
   if not isinstance(cmd, str):
     raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
@@ -47,7 +47,7 @@ def call_kubectl_cmd(cmd: str):
         raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
   try:
     output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
-    if g_print_tool_output:
+    if config.g_print_tool_output:
       print(f"{CYAN}{output}{RESET}")
     return output
   except subprocess.CalledProcessError as e:
@@ -59,7 +59,6 @@ def ask_question_to_admin(question: str):
   """
   Prompts the user with a question from the LLM
   """
-  g_used_tools.append(CustomTool.ASK_QUESTION)
   if not isinstance(question, str):
     raise ToolError(f"Tool argument `question` MUST be of type string. Got {type(question)}.")
   return questionary.text(question).ask()
@@ -69,9 +68,8 @@ def sleep(seconds_to_sleep: int):
   """
   Sleeps for a period of time so the LLM doesn't have to spam needlessly
   """
-  g_used_tools.append(CustomTool.SLEEP)
   if not isinstance(seconds_to_sleep, int):
     raise ToolError(f"Tool argument `question` MUST be of type int. Got {type(seconds_to_sleep)}.")
-  if g_print_tool_output:
+  if config.g_print_tool_output:
     print(f"Sleeping {seconds_to_sleep} seconds.")
   time.sleep(seconds_to_sleep)

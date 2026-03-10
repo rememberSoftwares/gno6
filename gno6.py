@@ -24,14 +24,18 @@ from enum import Enum
 import sys
 from llm_fs_tools import (FilesystemToolbox, ToolError)
 from kubectl_tools import *
+import config
+
 
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[K")
 
+
 CYAN = "\033[36m"
 RESET = "\033[0m"
+GREEN = "\033[32m"
 
 class CustomTool(Enum):
     KUBECTL = 1
@@ -39,9 +43,6 @@ class CustomTool(Enum):
     SLEEP = 3
     SOLVED_TASK = 4
 
-
-g_used_tools: list[CustomTool] = []
-g_print_tool_output = False
 
 def get_config_from_env():
   """
@@ -87,11 +88,11 @@ class TaskIsSolved(Exception):
 # Tools for the LLM to use #
 ############################
 
-def mission_accomplished():
+def mission_accomplished(final_report: str):
   """
   When the task is done, ends the current workflow.
   """
-  g_used_tools.append(CustomTool.SOLVED_TASK)
+  print(f"{GREEN}{final_report}{RESET}")
   raise TaskIsSolved("LLM thinks it solved the initial task")
 
 
@@ -103,7 +104,7 @@ def init_tools():
   kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
   ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True)
   sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
-  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+  task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. If you do call this tool then give your final report to the Kubernetes admin as tool parameter. Use the report to answer the initial task that you were assigned and explain your actions. You will be given a completely new task after calling this tool.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
   tools = FilesystemToolbox(workspace_root=Path(".").resolve())
   list_files_tool = Tool("list_files","List files under `path`. Returns structured dict.\n"
@@ -141,7 +142,6 @@ def init_tools():
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
-  global g_print_tool_output
   system_prompt="""You are a helpful AI assistant expert on kubernetes and kubectl. You job is to fulfill a kubernetes related task given by the cluster admin. To help you fulfill the task you have access to a kubectl tool letting you interact with the cluter. Use it wisely. When debbuging, always follow this approch:
 
 # PLANIFICATION PHASE
@@ -172,7 +172,7 @@ When requiring more information about an issue or needing help, you can ask ques
 
   logging_level = "WARNING" if logging_level == "DEFAULT" else logging_level
   LoggerManager.set_log_level(logging_level)
-  g_print_tool_output = True if logging_level == "WARNING" else False
+  config.g_print_tool_output = True if logging_level == "WARNING" else False
   return agent
 
 
