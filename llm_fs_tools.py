@@ -24,13 +24,9 @@ import re
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
-
-# ANSI color codes for diffs (safe for terminals; if you return to an LLM UI that strips codes it's still fine)
-ANSI_GREEN = "\x1b[32m"
-ANSI_RED = "\x1b[31m"
-ANSI_CYAN = "\x1b[36m"
-ANSI_RESET = "\x1b[0m"
-ANSI_BOLD = "\x1b[1m"
+import questionary
+import config
+from utils import *
 
 
 class ToolError(Exception):
@@ -84,6 +80,8 @@ class FilesystemToolbox:
         :param recursive: whether to recurse
         :param show_line_count: if True, include the number of lines in each file (text files; binary skipped)
         """
+        if config.g_print_tool_output:
+          print("> Listing files")
         root = self._resolve_safe(path)
         if not root.exists():
             raise ToolError(f"Path does not exist: {path}")
@@ -125,6 +123,9 @@ class FilesystemToolbox:
         file_path = self._resolve_safe(path)
         if not file_path.exists() or not file_path.is_file():
             raise ToolError(f"File not found: {path}")
+
+        if config.g_print_tool_output:
+          print(f"> Reading file `{str(file_path)}`")
 
         lines = self._read_all_lines(file_path)
         total = len(lines)
@@ -170,12 +171,13 @@ class FilesystemToolbox:
         if file_path.exists() and not overwrite:
             raise ToolError(f"File exists and overwrite is False: {path}")
 
+
         # Ensure text ends with newline
         data = content
         # Decide newline behaviour: keep as-is; ensure final newline for consistency
         if not data.endswith("\n"):
             data = data + "\n"
-
+        confirm_exec(f"Write to file `{str(file_path)}` ?")
         file_path.write_text(data, encoding="utf-8")
         lines = data.splitlines()
         return {
@@ -222,6 +224,8 @@ class FilesystemToolbox:
             # keep as no trailing newline if original had none
             pass
 
+        confirm_exec(f"Edit file inplace `{str(file_path)}` ?")
+
         file_path.write_text(out_text, encoding="utf-8")
 
         # Prepare diff but only for the modified region context: show a reasonable window
@@ -255,6 +259,8 @@ class FilesystemToolbox:
                 else:
                     colored.append(ln)
             colored_diff = "\n".join(colored)
+            if colored_diff is not None:
+              print(colored_diff)
 
         return {
             "file": str(file_path.relative_to(self.workspace_root)),
@@ -277,6 +283,9 @@ class FilesystemToolbox:
         :param max_results: stop after this many matches
         :param use_regex: if True compile pattern as regex (re.I by default if pattern looks case-insensitive)
         """
+        if config.g_print_tool_output:
+          print(f"> Searching through files")
+
         root = self._resolve_safe(path)
         if not root.exists():
             raise ToolError(f"Path does not exist: {path}")
@@ -346,6 +355,7 @@ class FilesystemToolbox:
                     # Not fatal; continue but warn in result
                     pass
 
+        confirm_exec(f"Exec file `{str(script_path)}` ?")
         cmd = [str(script_path)] + list(args)
         if background:
             # prepare log files

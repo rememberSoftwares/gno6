@@ -1,6 +1,30 @@
 import questionary
 import time, subprocess
 import config
+from yacana import ToolError
+from utils import *
+
+def call_helm_cmd(cmd: str):
+  print(f"```\n{cmd}\n```")
+  if not isinstance(cmd, str):
+    raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
+
+  split_cmd = cmd.split(" ")
+  if len(split_cmd) < 3:
+    raise ToolError(f"An automatic validation rule blocked this helm command. The command is required to be split in 3 parts: 'helm', 'action' and 'path'. A command cannot have less than 3 space divided section.")
+
+  if split_cmd[0] != "helm":
+    raise ToolError(f"Command must start with 'helm'.")
+
+  try:
+    output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
+    if config.g_print_tool_output:
+      print(f"{ANSI_CYAN}{output}{ANSI_RESET}")
+    return output
+  except subprocess.CalledProcessError as e:
+    raise ToolError(repr(e.output))
+  except subprocess.TimeoutExpired as e:
+    return f"Command timed out after {e.timeout}s: {cmd}"
 
 def call_kubectl_cmd(cmd: str):
   """
@@ -38,22 +62,17 @@ def call_kubectl_cmd(cmd: str):
 
   # If it's not a 'observation' cmd then ask user for validation
   if split_cmd[1] != "get" and split_cmd[1] != "describe" and split_cmd[1] != "logs":
-    while True:
-      confirmed: bool = questionary.confirm("Exec command ?").ask()
-      if confirmed:
-        break
-      elif not confirmed:
-        reason: str = questionary.text("Reason to give the LLM why you said no.").ask()
-        raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
+    confirm_exec("Exec command ?")
   try:
     output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
     if config.g_print_tool_output:
-      print(f"{CYAN}{output}{RESET}")
+      print(f"{ANSI_CYAN}{output}{ANSI_RESET}")
     return output
   except subprocess.CalledProcessError as e:
     raise ToolError(repr(e.output))
   except subprocess.TimeoutExpired as e:
     return f"Command timed out after {e.timeout}s: {cmd}"
+
 
 def ask_question_to_admin(question: str):
   """

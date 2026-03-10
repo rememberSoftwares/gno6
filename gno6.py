@@ -101,7 +101,9 @@ def mission_accomplished(final_report: str):
 #################################
 
 def init_tools():
-  kubectl_tool = Tool("exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+  kubectl_exec_tool = Tool("kubectl_exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+  helm_exec_tool = Tool("helm_exec", "Executes a helm command and return the output. The string must start by 'helm' and be a valid helm command.", call_helm_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
   ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True)
   sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
   task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. If you do call this tool then give your final report to the Kubernetes admin as tool parameter. Use the report to answer the initial task that you were assigned and explain your actions. You will be given a completely new task after calling this tool.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
@@ -138,7 +140,7 @@ def init_tools():
         "  - 'shell' lets you run via shell; default False (recommended).",
         tools.exec_script, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
-  return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool)
+  return (kubectl_exec_tool, helm_exec_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool)
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
@@ -229,7 +231,7 @@ Final instructions: Do not make things up. Ground your answer based on this conv
 
 def main():
   endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-  kubectl_tool, ask_question_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool = init_tools()
+  kubectl_exec_tool, helm_exec_tool, ask_question_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool = init_tools()
 
   while True:
     init: bool = True
@@ -244,7 +246,7 @@ def main():
       while True:
         uid: str = str(uuid.uuid4())
         prompt: str = "Do you need to use a tool" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
-        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool, ask_question_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool], tags=["kubectl", uid]).solve()
+        Task(prompt, main_agent, tools=[kubectl_exec_tool, helm_exec_tool, sleep_tool, ask_question_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool], tags=["kubectl", uid]).solve()
         init = False
 
         #Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool], tags=[uid]).solve()
