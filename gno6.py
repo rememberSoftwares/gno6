@@ -19,8 +19,11 @@ print("Booting...")
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
 import questionary
 import time, subprocess, os, uuid
+from pathlib import Path
 from enum import Enum
 import sys
+from llm_fs_tools import (FilesystemToolbox, ToolError)
+from kubectl_tools import *
 
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
@@ -84,82 +87,6 @@ class TaskIsSolved(Exception):
 # Tools for the LLM to use #
 ############################
 
-def call_kubectl_cmd(cmd: str):
-  """
-  Executes a kubectl command
-  """
-  g_used_tools.append(CustomTool.KUBECTL)
-  print(f"```\n{cmd}\n```")
-  if not isinstance(cmd, str):
-    raise ToolError(f"Tool argument `cmd` MUST be of type string. Got {type(cmd)}.")
-
-  split_cmd = cmd.split(" ")
-  if len(split_cmd) < 3:
-    raise ToolError(f"An automatic validation rule blocked this kubectl command. The command is required to be split in 3 parts: 'kubectl', 'verb' and 'resource'. A command cannot have less than 3 space divided section.")
-
-  if split_cmd[0] != "kubectl":
-    raise ToolError(f"Command must start with 'kubectl'.")
-
-  # Ordering kubectl parameter for easyer parsing
-  if split_cmd[1] == "-n" or split_cmd[1] == "--namespace":
-    endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-    agent = init_agent(endpoint, api_key, model, endpoint_provider, "WARNING")
-    cmd = Task(f"Please rewrite the kubectl command so that the action (ie: get, patch, etc) is directly after the kubectl keyword and the namespace is at the end. For instance, we want 'kubectl get pod -n <namespace>'.  The command to update: `{cmd}`\nOnly answer with the updated command and nothing else (no quotes either). Just the updated raw kubectl command with its new parameters correctly ordered.", agent).solve().content
-    split_cmd = cmd.split(" ")
-    LoggerManager.set_log_level(log_level)
-
-  if split_cmd[1] == "watch": # Ca ca va poser pb. Car la boucle de validation va quand même réessayer. Sauf si le LLM peut shit sur sleep dans le retry de yacana ?
-    raise ToolError("Verb `watch` is blocked because this particular command doesn't exit. To wait for some specific time use the sleep tool.")
-
-  # Limiting tail output length so the context size stays manageable
-  if split_cmd[1] == "logs" and "--tail" not in cmd:
-    endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-    agent = init_agent(endpoint, api_key, model, endpoint_provider, "WARNING")
-    cmd = Task(f"Please add the missing --tail=100 in this kubectl command: `{cmd}`\nOnly answer with the updated command and nothing else (no quotes either). Just the updated raw kubectl command with its new tail parameter.", agent).solve().content
-    split_cmd = cmd.split(" ")
-    LoggerManager.set_log_level(log_level)
-
-  # If it's not a 'observation' cmd then ask user for validation
-  if split_cmd[1] != "get" and split_cmd[1] != "describe" and split_cmd[1] != "logs":
-    while True:
-      confirmed: bool = questionary.confirm("Exec command ?").ask()
-      if confirmed:
-        break
-      elif not confirmed:
-        reason: str = questionary.text("Reason to give the LLM why you said no.").ask()
-        raise ToolError(f"kubectl command was denied by the cluster admin with the following reason : {reason}")
-  try:
-    output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True, timeout=20, universal_newlines=True)
-    if g_print_tool_output:
-      print(f"{CYAN}{output}{RESET}")
-    return output
-  except subprocess.CalledProcessError as e:
-    raise ToolError(repr(e.output))
-  except subprocess.TimeoutExpired as e:
-    return f"Command timed out after {e.timeout}s: {cmd}"
-
-def ask_question_to_admin(question: str):
-  """
-  Prompts the user with a question from the LLM
-  """
-  g_used_tools.append(CustomTool.ASK_QUESTION)
-  if not isinstance(question, str):
-    raise ToolError(f"Tool argument `question` MUST be of type string. Got {type(question)}.")
-  return questionary.text(question).ask()
-
-
-def sleep(seconds_to_sleep: int):
-  """
-  Sleeps for a period of time so the LLM doesn't have to spam needlessly
-  """
-  g_used_tools.append(CustomTool.SLEEP)
-  if not isinstance(seconds_to_sleep, int):
-    raise ToolError(f"Tool argument `question` MUST be of type int. Got {type(seconds_to_sleep)}.")
-  if g_print_tool_output:
-    print(f"Sleeping {seconds_to_sleep} seconds.")
-  time.sleep(seconds_to_sleep)
-
-
 def mission_accomplished():
   """
   When the task is done, ends the current workflow.
@@ -177,7 +104,40 @@ def init_tools():
   ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True)
   sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
   task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. You will be given a completely new task after calling this.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
-  return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool)
+
+  tools = FilesystemToolbox(workspace_root=Path(".").resolve())
+  list_files_tool = Tool("list_files","List files under `path`. Returns structured dict.\n"
+        ":param path: directory path relative to workspace_root\n"
+        ":param recursive: whether to recurse\n"
+        ":param show_line_count: if True, include the number of lines in each file (text files; binary skipped)",
+        tools.list_files, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
+  read_file_tool = Tool("read_file", "Read file lines using 1-based inclusive indexing.\n"
+        "If both start_line and end_line are None -> return full file.\n"
+        "Raises ToolError if OOB.",
+        tools.read_file, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
+  edit_file_tool = Tool("edit_file", "Replace lines [start_line, end_line] (1-based inclusive) with replacement text.\n"
+        "Returns metadata and a colorized diff (if modified snippet < 100 lines).\n"
+        "Raises ToolError for OOB or missing file.\n",
+        tools.edit_file, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
+  search_in_files = Tool("search_in_files", "Search for `pattern` inside files under path. Returns list of matches:\n"
+        '{ "file": "path", "line_no": n, "line": "...", "match": "..." }\n'
+        ":param pattern: string or regex\n"
+        ":param path: directory/file path relative to workspace_root\n"
+        ":param max_results: stop after this many matches\n"
+        ":param use_regex: if True compile pattern as regex (re.I by default if pattern looks case-insensitive)",
+        tools.search_in_files, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
+  exec_script_tool = Tool("exec_script", "Execute a script at path. If background=True, start process and return PID and log paths; does not wait.\n"
+        "If background=False, run synchronously and return exit code, stdout and stderr.\n"
+        "Security:\n"
+        "  - The script path must be inside workspace_root.\n"
+        "  - 'shell' lets you run via shell; default False (recommended).",
+        tools.exec_script, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
+  return (kubectl_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool)
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
@@ -269,7 +229,7 @@ Final instructions: Do not make things up. Ground your answer based on this conv
 
 def main():
   endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-  kubectl_tool, ask_question_tool, sleep_tool, task_is_solved_tool = init_tools()
+  kubectl_tool, ask_question_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool = init_tools()
 
   while True:
     init: bool = True
@@ -284,7 +244,7 @@ def main():
       while True:
         uid: str = str(uuid.uuid4())
         prompt: str = "Do you need to use a tool" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
-        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool, ask_question_tool], tags=["kubectl", uid]).solve()
+        Task(prompt, main_agent, tools=[kubectl_tool, sleep_tool, ask_question_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool], tags=["kubectl", uid]).solve()
         init = False
 
         #Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool], tags=[uid]).solve()
@@ -293,8 +253,8 @@ def main():
         #Task("", main_agent, tags=[uid])
 
         #print("Token count", main_agent.history.get_token_count())
-        if main_agent.history.get_token_count() > 10000:
-          compact_history(main_agent)
+        #if main_agent.history.get_token_count() > 10000:
+        #  compact_history(main_agent)
 
     except TaskIsSolved:
       answer: bool = questionary.confirm("LLM thinks that the original task is solved.")
