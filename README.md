@@ -18,7 +18,8 @@ It should be safe to use anywhere but refrain from using this on any production 
 - **Kubernetes based workflows**: Built specificaly for kubernetes needs. This agent already knows the steps to debug clusters. Ask it anything and it will start working while you drink mojitos.
 - **Automatic kubectl command apply**: Don't need to paste kubectl commands from chatGPT. The LLM will make it's own commands and use the output accordingly.
 - **Asks user when question arises**: When the LLM is unsure how to proceed or needs some piece of information, it will ask you directly.
-
+- **File system access**: Can search, read and write files so you can work with your local helm charts.  
+- **scripts and helm exec**: Can exec scripts or use helm binary to interact with your cluster.  
 ---
 
 ## Requirements
@@ -59,6 +60,15 @@ gno6
 ```
 
 ⚠️ Python3.14 is not supported because of Pydantic. If you don't want to downgrade your whole system, use UV ! It will deal with python versions for you.
+
+
+## Upgrading
+
+1. Pull the lastest changes using git  
+2. Uninstall current version of the tool: `uv tool uninstall gno6`  
+3. Reinstall the tool: `uv tool install .`  
+
+If the version doesn't update then uninstall and try `uv cache clean` before reinstalling the tool.  
 
 ---
 
