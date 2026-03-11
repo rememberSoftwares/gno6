@@ -1,4 +1,5 @@
 import questionary
+from yacana import ToolError
 
 # ANSI color codes for diffs (safe for terminals; if you return to an LLM UI that strips codes it's still fine)
 ANSI_GREEN = "\x1b[32m"

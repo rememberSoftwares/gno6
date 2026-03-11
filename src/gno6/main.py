@@ -38,11 +38,6 @@ sys.stdout.write("\033[F")
 sys.stdout.write("\033[F")
 sys.stdout.write("\033[K")
 
-
-#CYAN = "\033[36m"
-#RESET = "\033[0m"
-#GREEN = "\033[32m"
-
 class CustomTool(Enum):
     KUBECTL = 1
     ASK_QUESTION = 2
@@ -109,7 +104,6 @@ def mission_accomplished(final_report: str):
 def init_tools():
   kubectl_exec_tool = Tool("kubectl_exec", "Executes a kubectl command and return the output. The string must start by 'kubectl' and be a valid kubectl command.", call_kubectl_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
   helm_exec_tool = Tool("helm_exec", "Executes a helm command and return the output. The string must start by 'helm' and be a valid helm command.", call_helm_cmd, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
-
   ask_question_to_admin_tool = Tool("human_in_the_loop", "Asks the cluster admin a question and returns his answer.", ask_question_to_admin, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True)
   sleep_tool = Tool("sleep", "Waits for a specified period of time. Useful to wait for kubernetes resource to update.", sleep, max_custom_error=70, max_call_error=70, tool_type=ToolType.OPENAI, optional=True) # tool_type=ToolType.OPENAI
   task_is_solved_tool = Tool("task_is_solved", "Call this tool when you think the initial task is solved. If you do call this tool then give your final report to the Kubernetes admin as tool parameter. Use the report to answer the initial task that you were assigned and explain your actions. You will be given a completely new task after calling this tool.", mission_accomplished, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
@@ -126,12 +120,18 @@ def init_tools():
         "Raises ToolError if OOB.",
         tools.read_file, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
+  write_file_tool = Tool("write_file", "Create or overwrite a file.\n"
+        ":param path: path relative to workspace_root\n"
+        ":param content: full file content (string)\n"
+        ":param overwrite: allow overwrite if file exists",
+        tools.write_file, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
+
   edit_file_tool = Tool("edit_file", "Replace lines [start_line, end_line] (1-based inclusive) with replacement text.\n"
         "Returns metadata and a colorized diff (if modified snippet < 100 lines).\n"
         "Raises ToolError for OOB or missing file.\n",
         tools.edit_file, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
-  search_in_files = Tool("search_in_files", "Search for `pattern` inside files under path. Returns list of matches:\n"
+  search_in_files_tool = Tool("search_in_files", "Search for `pattern` inside files under path. Returns list of matches:\n"
         '{ "file": "path", "line_no": n, "line": "...", "match": "..." }\n'
         ":param pattern: string or regex\n"
         ":param path: directory/file path relative to workspace_root\n"
@@ -146,7 +146,13 @@ def init_tools():
         "  - 'shell' lets you run via shell; default False (recommended).",
         tools.exec_script, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
-  return (kubectl_exec_tool, helm_exec_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool)
+  print("#################")
+  print(edit_file_tool._openai_function_schema)
+  print(edit_file_tool._function_prototype)
+  print(str(edit_file_tool._function_args))
+  print("||||||||||||||||||||")
+
+  return (kubectl_exec_tool, helm_exec_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, write_file_tool, edit_file_tool, search_in_files_tool, exec_script_tool)
 
 
 def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level=None) -> None:
@@ -169,7 +175,12 @@ def init_agent(endpoint: str, api_key: str, model: str, type: str, logging_level
 * Use kubectl commands to update resources. You can use verbs like patch, scale, rollout etc.
 * Use `kubectl explain` when getting contradicting or no result commands.
 
-When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
+General guidelines:
+* When requiring more information about an issue or needing help, you can ask question to the cluster admin using the ask_question tool. Don't do everything all at once. Do one thing at a time. Decompose actions and work step by step. When calling the kubectl tool only provide one command at a time. You will have many opportunities to execute kubectl commands so don't rush.
+* When editing YAML files:  
+- preserve existing indentation  
+- never change indentation outside the edited lines  
+- match the indentation level of surrounding lines  
 """
   if type == "openai":
     agent = OpenAiAgent("AI assistant", model, api_token=api_key, endpoint=endpoint, system_prompt=system_prompt)
@@ -237,7 +248,7 @@ Final instructions: Do not make things up. Ground your answer based on this conv
 
 def main():
   endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
-  kubectl_exec_tool, helm_exec_tool, ask_question_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool = init_tools()
+  kubectl_exec_tool, helm_exec_tool, ask_question_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, write_file_tool, edit_file_tool, search_in_files, exec_script_tool = init_tools()
 
   while True:
     init: bool = True
@@ -252,7 +263,7 @@ def main():
       while True:
         uid: str = str(uuid.uuid4())
         prompt: str = "Do you need to use a tool" if init is False else f"You have received a task from the kubernetes cluster admin. <task>{user_query}</task>. Fulfill the admin's task using the tools at your disposition. Start with the planification phase then take action."
-        Task(prompt, main_agent, tools=[kubectl_exec_tool, helm_exec_tool, sleep_tool, ask_question_tool, list_files_tool, read_file_tool, edit_file_tool, search_in_files, exec_script_tool], tags=["kubectl", uid]).solve()
+        Task(prompt, main_agent, tools=[kubectl_exec_tool, helm_exec_tool, sleep_tool, ask_question_tool, list_files_tool, read_file_tool, write_file_tool, edit_file_tool, search_in_files], tags=["kubectl", uid]).solve()
         init = False
 
         #Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool], tags=[uid]).solve()

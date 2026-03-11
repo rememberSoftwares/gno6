@@ -27,9 +27,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import questionary
 from .utils import *
 from . import config
-
-class ToolError(Exception):
-    """Exception raised for tool-specific errors (invalid input, OOB, permission, etc.)."""
+from yacana import ToolError
 
 
 class FilesystemToolbox:
@@ -119,6 +117,11 @@ class FilesystemToolbox:
         If both start_line and end_line are None -> return full file.
         Raises ToolError if OOB.
         """
+        if start_line and not isinstance(start_line, int):
+          raise ToolError(f"Invalid argument type. Tool argument `start_line` MUST be of type int.")
+        if end_line and not isinstance(end_line, int):
+          raise ToolError(f"Invalid argument type. Tool argument `end_line` MUST be of type int.")
+
         file_path = self._resolve_safe(path)
         if not file_path.exists() or not file_path.is_file():
             raise ToolError(f"File not found: {path}")
@@ -194,6 +197,10 @@ class FilesystemToolbox:
         Returns metadata and a colorized diff (if modified snippet < 100 lines).
         Raises ToolError for OOB or missing file.
         """
+
+        if not isinstance(start_line, int) or not isinstance(end_line, int):
+          raise ToolError(f"Invalid argument type. Tool arguments `start_line` and `end_line` MUST be of type int.")
+
         file_path = self._resolve_safe(path)
         if not file_path.exists() or not file_path.is_file():
             raise ToolError(f"File not found: {path}")
@@ -282,6 +289,9 @@ class FilesystemToolbox:
         :param max_results: stop after this many matches
         :param use_regex: if True compile pattern as regex (re.I by default if pattern looks case-insensitive)
         """
+        if not isinstance(max_results, int):
+          raise ToolError(f"Invalid argument type. Tool argument `max_results` MUST be of type int.")
+
         if config.g_print_tool_output:
           print(f"> Searching through files")
 
@@ -394,12 +404,3 @@ class FilesystemToolbox:
                 return {"status": "timeout", "timeout_seconds": timeout, "stdout": te.stdout or "", "stderr": te.stderr or ""}
             except Exception as e:
                 raise ToolError(f"Failed to execute script: {e}")
-
-# -----------------------
-# Example instantiation (for developer usage)
-# -----------------------
-#if __name__ == "__main__":
-#    # quick smoke test (adjust workspace_root to something valid)
-#    toolbox = FilesystemToolbox(workspace_root=Path(".").resolve())
-#    print("Listing current dir (no line counts):")
-#    print(toolbox.list_files(".", recursive=False, show_line_count=False))
