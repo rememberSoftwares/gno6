@@ -146,12 +146,6 @@ def init_tools():
         "  - 'shell' lets you run via shell; default False (recommended).",
         tools.exec_script, max_custom_error=70, max_call_error=70, optional=True, tool_type=ToolType.OPENAI)
 
-  print("#################")
-  print(edit_file_tool._openai_function_schema)
-  print(edit_file_tool._function_prototype)
-  print(str(edit_file_tool._function_args))
-  print("||||||||||||||||||||")
-
   return (kubectl_exec_tool, helm_exec_tool, ask_question_to_admin_tool, sleep_tool, task_is_solved_tool, list_files_tool, read_file_tool, write_file_tool, edit_file_tool, search_in_files_tool, exec_script_tool)
 
 
