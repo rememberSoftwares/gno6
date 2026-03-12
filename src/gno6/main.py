@@ -20,7 +20,7 @@ print(r"""
                                         
 """)
 print("Powered by Yacana (https://remembersoftwares.github.io/yacana)")
-print("alpha2.1")
+print("alpha2.2")
 print("Booting...")
 
 from yacana import OllamaAgent, OpenAiAgent, Task, Tool, ToolType, Message, GenericMessage, OllamaModelSettings, OpenAiModelSettings, LoggerManager, ToolError, MaxToolErrorIter, MessageRole
