@@ -58,6 +58,7 @@ sys.stdout.write("\033[F")
 sys.stdout.write("\033[K")
 sys.stdout.write("\033[K")
 
+
 class CustomTool(Enum):
     KUBECTL = 1
     ASK_QUESTION = 2
@@ -430,11 +431,10 @@ def load_agent(command: str) -> Tuple[bool, GenericAgent]:
     return False, None
 
 
-
 def manage_mcp_connections(command: str) -> bool:
     if command.startswith("/mcp"):
         choice = questionary.select(
-            "Add or delete MCP URL ?", choices=["Add", "Delete"]
+            "Add or delete MCP URL ?", choices=["Add", "Delete", "Activate/Deactivate"]
         ).ask()
         if choice is None:
             os._exit(0)
@@ -452,8 +452,12 @@ def manage_mcp_connections(command: str) -> bool:
             mcp_url = questionary.text("What's the MCP URL ?").ask()
             if mcp_url is None:
                 os._exit(0)
-            if mcp_url not in mcp_urls:
-                mcp_urls.append(mcp_url)
+            existing_urls = [
+                entry.get("url") if isinstance(entry, dict) else entry
+                for entry in mcp_urls
+            ]
+            if mcp_url not in existing_urls:
+                mcp_urls.append({"url": mcp_url, "active": True})
                 with open(mcp_config_path, "w") as f:
                     json.dump({"urls": mcp_urls}, f, indent=2)
                 print(f"MCP URL added: {mcp_url}")
@@ -461,15 +465,59 @@ def manage_mcp_connections(command: str) -> bool:
             if not mcp_urls:
                 print("No MCP URLs configured.")
                 return True
+            choices = []
+            for entry in mcp_urls:
+                if isinstance(entry, dict):
+                    url = entry.get("url", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Unactive]"
+                    choices.append(f"{status} {url}")
+                else:
+                    choices.append(f"[Active] {entry}")
             selected = questionary.select(
-                "Select MCP URL to delete:", choices=mcp_urls
+                "Select MCP URL to delete:", choices=choices
             ).ask()
             if selected is None:
                 os._exit(0)
-            mcp_urls.remove(selected)
+            selected_url = selected.split("] ", 1)[-1]
+            for i, entry in enumerate(mcp_urls):
+                url = entry.get("url") if isinstance(entry, dict) else entry
+                if url == selected_url:
+                    mcp_urls.pop(i)
+                    break
             with open(mcp_config_path, "w") as f:
                 json.dump({"urls": mcp_urls}, f, indent=2)
-            print(f"MCP URL deleted: {selected}")
+            print(f"MCP URL deleted: {selected_url}")
+        elif choice == "Activate/Deactivate":
+            if not mcp_urls:
+                print("No MCP URLs configured.")
+                return True
+            choices = []
+            for entry in mcp_urls:
+                if isinstance(entry, dict):
+                    url = entry.get("url", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Unactive]"
+                    choices.append(f"{status} {url}")
+                else:
+                    choices.append(f"[Active] {entry}")
+            selected = questionary.select(
+                "Select MCP URL to toggle:", choices=choices
+            ).ask()
+            if selected is None:
+                os._exit(0)
+            selected_url = selected.split("] ", 1)[-1]
+            for i, entry in enumerate(mcp_urls):
+                if isinstance(entry, dict):
+                    if entry.get("url") == selected_url:
+                        mcp_urls[i]["active"] = not entry.get("active", True)
+                        break
+                elif entry == selected_url:
+                    mcp_urls[i] = {"url": entry, "active": False}
+                    break
+            with open(mcp_config_path, "w") as f:
+                json.dump({"urls": mcp_urls}, f, indent=2)
+            print(selected_url)
         return True
     return False
 
@@ -487,7 +535,14 @@ def load_mcp_tools() -> list[Tool]:
         return []
 
     tools = []
-    for url in mcp_urls:
+    for entry in mcp_urls:
+        if isinstance(entry, dict):
+            url = entry.get("url", "")
+            active = entry.get("active", True)
+            if not active:
+                continue
+        else:
+            url = entry
         try:
             mcp = Mcp(url)
             mcp.connect()
@@ -521,10 +576,19 @@ def main():
 
         print("Commands:\n*/history\n*/mcp")
         print("")
-        user_query: str = questionary.text("How may I help with your cluster ?").ask()
+        user_query: str = questionary.autocomplete(
+            "How may I help ?",
+            choices=[
+                "/new - Start a new conversation",
+                "/history - Manage previous conversations",
+                "/mcp - Manage MCP connections",
+            ],
+            match_middle=False,
+        ).ask()
+        # user_query: str = questionary.text("How may I help with your cluster ?").ask()
         if user_query is None:
             return 0
-        
+
         if manage_mcp_connections(user_query):
             mcp_tools = load_mcp_tools()
             continue
