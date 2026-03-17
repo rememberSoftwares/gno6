@@ -211,12 +211,43 @@ def jira_get_issue(alias: str, issue_key: str) -> dict:
     try:
         issue = client.get_issue(issue_key)
         fields = issue.get("fields", {})
+
+        linked_issues = []
+        for link in fields.get("issuelinks", []):
+            link_type = link.get("type", {})
+            link_type_name = link_type.get("name", "")
+
+            if "outwardIssue" in link:
+                outward = link["outwardIssue"]
+                outward_fields = outward.get("fields", {})
+                linked_issues.append(
+                    {
+                        "key": outward.get("key"),
+                        "summary": outward_fields.get("summary"),
+                        "status": outward_fields.get("status", {}).get("name"),
+                        "type": link_type.get("outward", link_type_name),
+                    }
+                )
+
+            if "inwardIssue" in link:
+                inward = link["inwardIssue"]
+                inward_fields = inward.get("fields", {})
+                linked_issues.append(
+                    {
+                        "key": inward.get("key"),
+                        "summary": inward_fields.get("summary"),
+                        "status": inward_fields.get("status", {}).get("name"),
+                        "type": link_type.get("inward", link_type_name),
+                    }
+                )
+
         return {
             "key": issue.get("key"),
             "summary": fields.get("summary"),
             "description": fields.get("description"),
             "status": fields.get("status", {}).get("name"),
             "issuetype": fields.get("issuetype", {}).get("name"),
+            "linked_issues": linked_issues,
         }
     except Exception as e:
         raise ToolError(f"Failed to get issue {issue_key}: {e}")
