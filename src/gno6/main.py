@@ -51,6 +51,7 @@ from datetime import datetime
 from .llm_fs_tools import FilesystemToolbox, ToolError
 from .kubectl_tools import *
 from .gitlab_tools import get_gitlab_tools, load_gitlab_config, save_gitlab_config
+from .jira_tools import get_jira_tools, load_jira_config, save_jira_config
 from . import config
 
 sys.stdout.write("\033[F")
@@ -156,6 +157,15 @@ def init_tools():
         "helm_exec",
         "Executes a helm command and return the output. The string must start by 'helm' and be a valid helm command.",
         call_helm_cmd,
+        max_custom_error=70,
+        max_call_error=70,
+        optional=True,
+        tool_type=ToolType.OPENAI,
+    )
+    git_exec_tool = Tool(
+        "git_exec",
+        "Executes a git command and return the output. The string must start by 'git' and be a valid git command.",
+        call_git_cmd,
         max_custom_error=70,
         max_call_error=70,
         optional=True,
@@ -272,6 +282,7 @@ def init_tools():
     return (
         kubectl_exec_tool,
         helm_exec_tool,
+        git_exec_tool,
         ask_question_to_admin_tool,
         sleep_tool,
         task_is_solved_tool,
@@ -287,7 +298,7 @@ def init_tools():
 def init_agent(
     endpoint: str, api_key: str, model: str, type: str, logging_level=None
 ) -> GenericAgent:
-    system_prompt = """You are a helpful AI assistant expert on kubernetes and kubectl. You job is to fulfill a kubernetes related task given by the cluster admin. To help you fulfill the task you have access to a kubectl tool letting you interact with the cluter. Use it wisely. When debbuging, always follow this approch:
+    system_prompt = """You are a helpful AI DEVOPS assistant expert on kubernetes. Your job is to fulfill a DEVOPS related task given by the Kubernetes cluster admin. To help you fulfill the task you have access to a list of tools letting you interact with k8s cluters, Gitlab or Jira. Use them wisely. When debbuging, always follow this approch:
 
 # PLANIFICATION PHASE
 * Always plan your tasks in advance.
@@ -332,11 +343,6 @@ General guidelines:
     LoggerManager.set_log_level(logging_level)
     config.g_print_tool_output = True if logging_level == "WARNING" else False
     return agent
-
-
-###################
-# Main logic loop #
-###################
 
 
 def load_previous_conversations() -> None | str:
@@ -638,6 +644,119 @@ def manage_gitlab_connections(command: str) -> bool:
     return False
 
 
+def manage_jira_connections(command: str) -> bool:
+    if command.startswith("/jira"):
+        choice = questionary.select(
+            "Add, delete or toggle Jira instance ?",
+            choices=["Add", "Delete", "Activate/Deactivate"],
+        ).ask()
+        if choice is None:
+            os._exit(0)
+
+        instances = load_jira_config()
+
+        if choice == "Add":
+            alias = questionary.text("Jira instance alias (unique identifier) ?").ask()
+            if alias is None:
+                os._exit(0)
+            url = questionary.text(
+                "Jira URL (e.g. https://company.atlassian.net) ?"
+            ).ask()
+            if url is None:
+                os._exit(0)
+            email = questionary.text("Email ?").ask()
+            if email is None:
+                os._exit(0)
+            api_token = questionary.password("API token ?").ask()
+            if api_token is None:
+                os._exit(0)
+            verify_ssl = questionary.confirm("Verify SSL ?", default=True).ask()
+            if verify_ssl is None:
+                os._exit(0)
+
+            existing_aliases = [
+                inst.get("alias") if isinstance(inst, dict) else inst
+                for inst in instances
+            ]
+            if alias in existing_aliases:
+                print(f"Jira '{alias}' already exists.")
+                return True
+
+            instances.append(
+                {
+                    "alias": alias,
+                    "url": url,
+                    "email": email,
+                    "api_token": api_token,
+                    "verify_ssl": verify_ssl,
+                    "active": True,
+                }
+            )
+            save_jira_config(instances)
+            print(f"Jira '{alias}' added.")
+        elif choice == "Delete":
+            if not instances:
+                print("No Jira instances configured.")
+                return True
+            choices = []
+            for entry in instances:
+                if isinstance(entry, dict):
+                    alias = entry.get("alias", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Inactive]"
+                    choices.append(f"{status} {alias}")
+                else:
+                    choices.append(f"[Active] {entry}")
+            selected = questionary.select(
+                "Select Jira instance to delete:", choices=choices
+            ).ask()
+            if selected is None:
+                os._exit(0)
+            selected_alias = selected.split("] ", 1)[-1]
+            for i, entry in enumerate(instances):
+                alias = entry.get("alias") if isinstance(entry, dict) else entry
+                if alias == selected_alias:
+                    instances.pop(i)
+                    break
+            save_jira_config(instances)
+            print(f"Jira '{selected_alias}' deleted.")
+        elif choice == "Activate/Deactivate":
+            if not instances:
+                print("No Jira instances configured.")
+                return True
+            choices = []
+            for entry in instances:
+                if isinstance(entry, dict):
+                    alias = entry.get("alias", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Inactive]"
+                    choices.append(f"{status} {alias}")
+                else:
+                    choices.append(f"[Active] {entry}")
+            selected = questionary.select(
+                "Select Jira instance to toggle:", choices=choices
+            ).ask()
+            if selected is None:
+                os._exit(0)
+            selected_alias = selected.split("] ", 1)[-1]
+            new_status = "deactivated"
+            for i, entry in enumerate(instances):
+                if isinstance(entry, dict):
+                    if entry.get("alias") == selected_alias:
+                        instances[i]["active"] = not entry.get("active", True)
+                        new_status = (
+                            "activated" if instances[i]["active"] else "deactivated"
+                        )
+                        break
+                elif entry == selected_alias:
+                    instances[i] = {"alias": entry, "active": False}
+                    break
+            save_jira_config(instances)
+            print(f"Jira '{selected_alias}' {new_status}.")
+        return True
+    return False
+
+
 def load_mcp_tools() -> list[Tool]:
     mcp_config_path = Path.home() / ".config" / "gno6" / "mcp.json"
 
@@ -673,6 +792,7 @@ def main():
     (
         kubectl_exec_tool,
         helm_exec_tool,
+        git_exec_tool,
         ask_question_tool,
         sleep_tool,
         task_is_solved_tool,
@@ -686,12 +806,13 @@ def main():
 
     mcp_tools = load_mcp_tools()
     gitlab_tools = get_gitlab_tools()
+    jira_tools = get_jira_tools()
     endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
     main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
     while True:
         init: bool = True
 
-        print("Commands:\n*/history\n*/mcp\n*/gitlab")
+        print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira")
         print("")
         user_query: str = questionary.autocomplete(
             "How may I help ?",
@@ -700,6 +821,7 @@ def main():
                 "/history - Manage previous conversations",
                 "/mcp - Manage MCP connections",
                 "/gitlab - Manage GitLab connections",
+                "/jira - Manage Jira connections",
             ],
             match_middle=False,
         ).ask()
@@ -713,6 +835,10 @@ def main():
 
         if manage_gitlab_connections(user_query):
             gitlab_tools = get_gitlab_tools()
+            continue
+
+        if manage_jira_connections(user_query):
+            jira_tools = get_jira_tools()
             continue
 
         cmd, agent_from_state = load_agent(user_query)
@@ -740,6 +866,7 @@ def main():
                     tools=[
                         kubectl_exec_tool,
                         helm_exec_tool,
+                        git_exec_tool,
                         sleep_tool,
                         ask_question_tool,
                         list_files_tool,
@@ -749,7 +876,8 @@ def main():
                         search_in_files,
                     ]
                     + mcp_tools
-                    + gitlab_tools,
+                    + gitlab_tools
+                    + jira_tools,
                     tags=["kubectl", uid],
                 ).solve()
                 init = False
