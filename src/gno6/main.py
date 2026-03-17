@@ -50,6 +50,7 @@ import sys
 from datetime import datetime
 from .llm_fs_tools import FilesystemToolbox, ToolError
 from .kubectl_tools import *
+from .gitlab_tools import get_gitlab_tools, load_gitlab_config, save_gitlab_config
 from . import config
 
 sys.stdout.write("\033[F")
@@ -522,6 +523,121 @@ def manage_mcp_connections(command: str) -> bool:
     return False
 
 
+def manage_gitlab_connections(command: str) -> bool:
+    if command.startswith("/gitlab"):
+        choice = questionary.select(
+            "Add, delete or toggle GitLab instance ?",
+            choices=["Add", "Delete", "Activate/Deactivate"],
+        ).ask()
+        if choice is None:
+            os._exit(0)
+
+        instances = load_gitlab_config()
+
+        if choice == "Add":
+            alias = questionary.text(
+                "GitLab instance alias (unique identifier) ?"
+            ).ask()
+            if alias is None:
+                os._exit(0)
+            url = questionary.text("GitLab URL (e.g. https://gitlab.com) ?").ask()
+            if url is None:
+                os._exit(0)
+            token = questionary.password("Personal access token ?").ask()
+            if token is None:
+                os._exit(0)
+            project_path = questionary.text(
+                "Project path (e.g. namespace/repo) ?"
+            ).ask()
+            if project_path is None:
+                os._exit(0)
+            ssl_verify = questionary.confirm("Verify SSL ?", default=True).ask()
+            if ssl_verify is None:
+                os._exit(0)
+
+            existing_aliases = [
+                inst.get("alias") if isinstance(inst, dict) else inst
+                for inst in instances
+            ]
+            if alias in existing_aliases:
+                print(f"GitLab '{alias}' already exists.")
+                return True
+
+            instances.append(
+                {
+                    "alias": alias,
+                    "url": url,
+                    "token": token,
+                    "project_path": project_path,
+                    "ssl_verify": ssl_verify,
+                    "active": True,
+                }
+            )
+            save_gitlab_config(instances)
+            print(f"GitLab '{alias}' added.")
+        elif choice == "Delete":
+            if not instances:
+                print("No GitLab instances configured.")
+                return True
+            choices = []
+            for entry in instances:
+                if isinstance(entry, dict):
+                    alias = entry.get("alias", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Inactive]"
+                    choices.append(f"{status} {alias}")
+                else:
+                    choices.append(f"[Active] {entry}")
+            selected = questionary.select(
+                "Select GitLab instance to delete:", choices=choices
+            ).ask()
+            if selected is None:
+                os._exit(0)
+            selected_alias = selected.split("] ", 1)[-1]
+            for i, entry in enumerate(instances):
+                alias = entry.get("alias") if isinstance(entry, dict) else entry
+                if alias == selected_alias:
+                    instances.pop(i)
+                    break
+            save_gitlab_config(instances)
+            print(f"GitLab '{selected_alias}' deleted.")
+        elif choice == "Activate/Deactivate":
+            if not instances:
+                print("No GitLab instances configured.")
+                return True
+            choices = []
+            for entry in instances:
+                if isinstance(entry, dict):
+                    alias = entry.get("alias", "")
+                    active = entry.get("active", True)
+                    status = "[Active]" if active else "[Inactive]"
+                    choices.append(f"{status} {alias}")
+                else:
+                    choices.append(f"[Active] {entry}")
+            selected = questionary.select(
+                "Select GitLab instance to toggle:", choices=choices
+            ).ask()
+            if selected is None:
+                os._exit(0)
+            selected_alias = selected.split("] ", 1)[-1]
+            new_status = "deactivated"
+            for i, entry in enumerate(instances):
+                if isinstance(entry, dict):
+                    if entry.get("alias") == selected_alias:
+                        instances[i]["active"] = not entry.get("active", True)
+                        new_status = (
+                            "activated" if instances[i]["active"] else "deactivated"
+                        )
+                        break
+                elif entry == selected_alias:
+                    instances[i] = {"alias": entry, "active": False}
+                    break
+            save_gitlab_config(instances)
+            print(f"GitLab '{selected_alias}' {new_status}.")
+        return True
+    return False
+
+
 def load_mcp_tools() -> list[Tool]:
     mcp_config_path = Path.home() / ".config" / "gno6" / "mcp.json"
 
@@ -569,12 +685,13 @@ def main():
     ) = init_tools()
 
     mcp_tools = load_mcp_tools()
+    gitlab_tools = get_gitlab_tools()
     endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
     main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
     while True:
         init: bool = True
 
-        print("Commands:\n*/history\n*/mcp")
+        print("Commands:\n*/history\n*/mcp\n*/gitlab")
         print("")
         user_query: str = questionary.autocomplete(
             "How may I help ?",
@@ -582,6 +699,7 @@ def main():
                 "/new - Start a new conversation",
                 "/history - Manage previous conversations",
                 "/mcp - Manage MCP connections",
+                "/gitlab - Manage GitLab connections",
             ],
             match_middle=False,
         ).ask()
@@ -591,6 +709,10 @@ def main():
 
         if manage_mcp_connections(user_query):
             mcp_tools = load_mcp_tools()
+            continue
+
+        if manage_gitlab_connections(user_query):
+            gitlab_tools = get_gitlab_tools()
             continue
 
         cmd, agent_from_state = load_agent(user_query)
@@ -626,7 +748,8 @@ def main():
                         edit_file_tool,
                         search_in_files,
                     ]
-                    + mcp_tools,
+                    + mcp_tools
+                    + gitlab_tools,
                     tags=["kubectl", uid],
                 ).solve()
                 init = False
