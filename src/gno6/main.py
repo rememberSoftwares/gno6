@@ -73,36 +73,40 @@ def get_config_from_env():
     Validating credentials are present
     """
     inter = False
-    if (endpoint := os.getenv("GNO6_ENDPOINT", None)) is None:
-        endpoint, inter = (
-            questionary.text(
-                "What's the LLM endpoint URL (should end with /v1) ?"
-            ).ask(),
-            True,
-        )
+    try:
+        if (endpoint := os.getenv("GNO6_ENDPOINT", None)) is None:
+            endpoint, inter = (
+                questionary.text(
+                    "What's the LLM endpoint URL (should end with /v1) ?"
+                ).ask(),
+                True,
+            )
 
-    if (api_key := os.getenv("GNO6_API_KEY", None)) is None:
-        api_key, inter = questionary.password("What's the api key ?").ask(), True
+        if (api_key := os.getenv("GNO6_API_KEY", None)) is None:
+            api_key, inter = questionary.password("What's the api key ?").ask(), True
 
-    if (model := os.getenv("GNO6_MODEL", None)) is None:
-        model, inter = questionary.text("What's the model name ?").ask(), True
+        if (model := os.getenv("GNO6_MODEL", None)) is None:
+            model, inter = questionary.text("What's the model name ?").ask(), True
 
-    if (provider := os.getenv("GNO6_PROVIDER", None)) is None:
-        provider, inter = (
-            questionary.select(
-                "What's the provider type",
-                choices=["openai", "ollama"],
-            ).ask(),
-            True,
-        )
+        if (provider := os.getenv("GNO6_PROVIDER", None)) is None:
+            provider, inter = (
+                questionary.select(
+                    "What's the provider type",
+                    choices=["openai", "ollama"],
+                ).ask(),
+                True,
+            )
 
-    if (log_level := os.getenv("GNO6_LOG_LEVEL", None)) is None:
-        log_level, inter = (
-            questionary.select(
-                "What log level do you want ?", choices=["DEFAULT", "INFO"]
-            ).ask(),
-            True,
-        )
+        if (log_level := os.getenv("GNO6_LOG_LEVEL", None)) is None:
+            log_level, inter = (
+                questionary.select(
+                    "What log level do you want ?", choices=["DEFAULT", "INFO"]
+                ).ask(),
+                True,
+            )
+    except KeyboardInterrupt:
+        print("\nGoodbye!")
+        os._exit(0)
 
     if inter is True:
         print(f"""Set these ENV variables so you don't have to do this again:
@@ -123,6 +127,14 @@ class TaskIsSolved(Exception):
     def __init__(self, message):
         self.message = message
         super().__init__(self.message)
+
+
+class UserInterrupt(Exception):
+    """
+    Exception raised when user presses Ctrl+C during agent execution.
+    """
+
+    pass
 
 
 ############################
@@ -377,16 +389,22 @@ def load_previous_conversations() -> None | str:
 
     choices.sort(reverse=True)
 
-    selected = questionary.select("Select a conversation:", choices=choices).ask()
+    try:
+        selected = questionary.select("Select a conversation:", choices=choices).ask()
+    except KeyboardInterrupt:
+        return None
     if selected is None:
         return None
 
     selected_index = choices.index(selected)
     selected_file = json_files[json_files.__len__() - 1 - selected_index]
 
-    action = questionary.select(
-        "What do you want to do?", choices=["Load", "Delete"]
-    ).ask()
+    try:
+        action = questionary.select(
+            "What do you want to do?", choices=["Load", "Delete"]
+        ).ask()
+    except KeyboardInterrupt:
+        return None
     if action is None:
         return None
 
@@ -440,11 +458,16 @@ def load_agent(command: str) -> Tuple[bool, GenericAgent]:
 
 def manage_mcp_connections(command: str) -> bool:
     if command.startswith("/mcp"):
-        choice = questionary.select(
-            "Add or delete MCP URL ?", choices=["Add", "Delete", "Activate/Deactivate"]
-        ).ask()
+        try:
+            choice = questionary.select(
+                "Add or delete MCP URL ?",
+                choices=["Add", "Delete", "Activate/Deactivate"],
+            ).ask()
+        except KeyboardInterrupt:
+            return False
+
         if choice is None:
-            os._exit(0)
+            return False
 
         mcp_config_path = Path.home() / ".config" / "gno6" / "mcp.json"
         mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -456,9 +479,12 @@ def manage_mcp_connections(command: str) -> bool:
             mcp_urls = []
 
         if choice == "Add":
-            mcp_url = questionary.text("What's the MCP URL ?").ask()
+            try:
+                mcp_url = questionary.text("What's the MCP URL ?").ask()
+            except KeyboardInterrupt:
+                return False
             if mcp_url is None:
-                os._exit(0)
+                return False
             existing_urls = [
                 entry.get("url") if isinstance(entry, dict) else entry
                 for entry in mcp_urls
@@ -481,11 +507,14 @@ def manage_mcp_connections(command: str) -> bool:
                     choices.append(f"{status} {url}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select MCP URL to delete:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select MCP URL to delete:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_url = selected.split("] ", 1)[-1]
             for i, entry in enumerate(mcp_urls):
                 url = entry.get("url") if isinstance(entry, dict) else entry
@@ -508,11 +537,14 @@ def manage_mcp_connections(command: str) -> bool:
                     choices.append(f"{status} {url}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select MCP URL to toggle:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select MCP URL to toggle:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_url = selected.split("] ", 1)[-1]
             for i, entry in enumerate(mcp_urls):
                 if isinstance(entry, dict):
@@ -531,35 +563,42 @@ def manage_mcp_connections(command: str) -> bool:
 
 def manage_gitlab_connections(command: str) -> bool:
     if command.startswith("/gitlab"):
-        choice = questionary.select(
-            "Add, delete or toggle GitLab instance ?",
-            choices=["Add", "Delete", "Activate/Deactivate"],
-        ).ask()
+        try:
+            choice = questionary.select(
+                "Add, delete or toggle GitLab instance ?",
+                choices=["Add", "Delete", "Activate/Deactivate"],
+            ).ask()
+        except KeyboardInterrupt:
+            return False
+
         if choice is None:
-            os._exit(0)
+            return False
 
         instances = load_gitlab_config()
 
         if choice == "Add":
-            alias = questionary.text(
-                "GitLab instance alias (unique identifier) ?"
-            ).ask()
-            if alias is None:
-                os._exit(0)
-            url = questionary.text("GitLab URL (e.g. https://gitlab.com) ?").ask()
-            if url is None:
-                os._exit(0)
-            token = questionary.password("Personal access token ?").ask()
-            if token is None:
-                os._exit(0)
-            project_path = questionary.text(
-                "Project path (e.g. namespace/repo) ?"
-            ).ask()
-            if project_path is None:
-                os._exit(0)
-            ssl_verify = questionary.confirm("Verify SSL ?", default=True).ask()
-            if ssl_verify is None:
-                os._exit(0)
+            try:
+                alias = questionary.text(
+                    "GitLab instance alias (unique identifier) ?"
+                ).ask()
+                if alias is None:
+                    return False
+                url = questionary.text("GitLab URL (e.g. https://gitlab.com) ?").ask()
+                if url is None:
+                    return False
+                token = questionary.password("Personal access token ?").ask()
+                if token is None:
+                    return False
+                project_path = questionary.text(
+                    "Project path (e.g. namespace/repo) ?"
+                ).ask()
+                if project_path is None:
+                    return False
+                ssl_verify = questionary.confirm("Verify SSL ?", default=True).ask()
+                if ssl_verify is None:
+                    return False
+            except KeyboardInterrupt:
+                return False
 
             existing_aliases = [
                 inst.get("alias") if isinstance(inst, dict) else inst
@@ -594,11 +633,14 @@ def manage_gitlab_connections(command: str) -> bool:
                     choices.append(f"{status} {alias}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select GitLab instance to delete:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select GitLab instance to delete:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_alias = selected.split("] ", 1)[-1]
             for i, entry in enumerate(instances):
                 alias = entry.get("alias") if isinstance(entry, dict) else entry
@@ -620,11 +662,14 @@ def manage_gitlab_connections(command: str) -> bool:
                     choices.append(f"{status} {alias}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select GitLab instance to toggle:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select GitLab instance to toggle:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_alias = selected.split("] ", 1)[-1]
             new_status = "deactivated"
             for i, entry in enumerate(instances):
@@ -646,33 +691,42 @@ def manage_gitlab_connections(command: str) -> bool:
 
 def manage_jira_connections(command: str) -> bool:
     if command.startswith("/jira"):
-        choice = questionary.select(
-            "Add, delete or toggle Jira instance ?",
-            choices=["Add", "Delete", "Activate/Deactivate"],
-        ).ask()
+        try:
+            choice = questionary.select(
+                "Add, delete or toggle Jira instance ?",
+                choices=["Add", "Delete", "Activate/Deactivate"],
+            ).ask()
+        except KeyboardInterrupt:
+            return False
+
         if choice is None:
-            os._exit(0)
+            return False
 
         instances = load_jira_config()
 
         if choice == "Add":
-            alias = questionary.text("Jira instance alias (unique identifier) ?").ask()
-            if alias is None:
-                os._exit(0)
-            url = questionary.text(
-                "Jira URL (e.g. https://company.atlassian.net) ?"
-            ).ask()
-            if url is None:
-                os._exit(0)
-            email = questionary.text("Email ?").ask()
-            if email is None:
-                os._exit(0)
-            api_token = questionary.password("API token ?").ask()
-            if api_token is None:
-                os._exit(0)
-            verify_ssl = questionary.confirm("Verify SSL ?", default=True).ask()
-            if verify_ssl is None:
-                os._exit(0)
+            try:
+                alias = questionary.text(
+                    "Jira instance alias (unique identifier) ?"
+                ).ask()
+                if alias is None:
+                    return False
+                url = questionary.text(
+                    "Jira URL (e.g. https://company.atlassian.net) ?"
+                ).ask()
+                if url is None:
+                    return False
+                email = questionary.text("Email ?").ask()
+                if email is None:
+                    return False
+                api_token = questionary.password("API token ?").ask()
+                if api_token is None:
+                    return False
+                verify_ssl = questionary.confirm("Verify SSL ?", default=True).ask()
+                if verify_ssl is None:
+                    return False
+            except KeyboardInterrupt:
+                return False
 
             existing_aliases = [
                 inst.get("alias") if isinstance(inst, dict) else inst
@@ -707,11 +761,14 @@ def manage_jira_connections(command: str) -> bool:
                     choices.append(f"{status} {alias}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select Jira instance to delete:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select Jira instance to delete:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_alias = selected.split("] ", 1)[-1]
             for i, entry in enumerate(instances):
                 alias = entry.get("alias") if isinstance(entry, dict) else entry
@@ -733,11 +790,14 @@ def manage_jira_connections(command: str) -> bool:
                     choices.append(f"{status} {alias}")
                 else:
                     choices.append(f"[Active] {entry}")
-            selected = questionary.select(
-                "Select Jira instance to toggle:", choices=choices
-            ).ask()
+            try:
+                selected = questionary.select(
+                    "Select Jira instance to toggle:", choices=choices
+                ).ask()
+            except KeyboardInterrupt:
+                return False
             if selected is None:
-                os._exit(0)
+                return False
             selected_alias = selected.split("] ", 1)[-1]
             new_status = "deactivated"
             for i, entry in enumerate(instances):
@@ -814,18 +874,22 @@ def main():
 
         print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira")
         print("")
-        user_query: str = questionary.autocomplete(
-            "How may I help ?",
-            choices=[
-                "/new - Start a new conversation",
-                "/history - Manage previous conversations",
-                "/mcp - Manage MCP connections",
-                "/gitlab - Manage GitLab connections",
-                "/jira - Manage Jira connections",
-            ],
-            match_middle=False,
-        ).ask()
-        # user_query: str = questionary.text("How may I help with your cluster ?").ask()
+        try:
+            user_query: str = questionary.autocomplete(
+                "How may I help ?",
+                choices=[
+                    "/new - Start a new conversation",
+                    "/history - Manage previous conversations",
+                    "/mcp - Manage MCP connections",
+                    "/gitlab - Manage GitLab connections",
+                    "/jira - Manage Jira connections",
+                ],
+                match_middle=False,
+            ).ask()
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            return 0
+
         if user_query is None:
             return 0
 
@@ -882,7 +946,6 @@ def main():
                 ).solve()
                 init = False
 
-                # Task("Do you have any questions to the cluster admin ? If you can continue working autonomously then cary on. Else use the tool to ask a question.", main_agent, tools=[ask_question_tool], tags=[uid]).solve()
                 Task(
                     "In your opinion, is the initial task solved or should you keep working ?",
                     main_agent,
@@ -890,14 +953,11 @@ def main():
                     tags=[uid],
                 ).solve()
 
-                # Task("", main_agent, tags=[uid])
-
-                # print("Token count", main_agent.history.get_token_count())
-                # if main_agent.history.get_token_count() > 10000:
-                #  compact_history(main_agent)
-
         except TaskIsSolved:
             save_conversation(main_agent)
+        except KeyboardInterrupt:
+            print("\nTask interrupted. Returning to main menu...")
+            continue
 
 
 if __name__ == "__main__":

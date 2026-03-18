@@ -299,6 +299,214 @@ def gitlab_list_issues(alias: str, state: str = "opened") -> List[dict]:
         raise ToolError(f"Failed to list issues: {e}")
 
 
+def gitlab_get_mr(alias: str, mr_iid: int) -> dict:
+    """
+    Retrieve a GitLab merge request by its IID.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(mr_iid, int):
+        raise ToolError(
+            f"Tool argument `mr_iid` MUST be of type int. Got {type(mr_iid)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mr = project.mergerequests.get(mr_iid)
+        return {
+            "iid": mr.iid,
+            "title": mr.title,
+            "description": mr.description,
+            "state": mr.state,
+            "source_branch": mr.source_branch,
+            "target_branch": mr.target_branch,
+            "labels": mr.labels,
+        }
+    except Exception as e:
+        raise ToolError(f"Failed to get merge request {mr_iid}: {e}")
+
+
+def gitlab_list_mrs(alias: str, state: str = "opened") -> List[dict]:
+    """
+    List GitLab merge requests in the project.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(state, str):
+        raise ToolError(
+            f"Tool argument `state` MUST be of type string. Got {type(state)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mrs = project.mergerequests.list(state=state, all=True)
+        return [
+            {
+                "iid": mr.iid,
+                "title": mr.title,
+                "state": mr.state,
+                "source_branch": mr.source_branch,
+                "target_branch": mr.target_branch,
+                "labels": mr.labels,
+            }
+            for mr in mrs
+        ]
+    except Exception as e:
+        raise ToolError(f"Failed to list merge requests: {e}")
+
+
+def gitlab_create_mr(
+    alias: str,
+    source_branch: str,
+    target_branch: str,
+    title: str,
+    description: str = "",
+    labels: Optional[List[str]] = None,
+) -> dict:
+    """
+    Create a new GitLab merge request.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(source_branch, str):
+        raise ToolError(
+            f"Tool argument `source_branch` MUST be of type string. Got {type(source_branch)}."
+        )
+    if not isinstance(target_branch, str):
+        raise ToolError(
+            f"Tool argument `target_branch` MUST be of type string. Got {type(target_branch)}."
+        )
+    if not isinstance(title, str):
+        raise ToolError(
+            f"Tool argument `title` MUST be of type string. Got {type(title)}."
+        )
+    if not isinstance(description, str):
+        raise ToolError(
+            f"Tool argument `description` MUST be of type string. Got {type(description)}."
+        )
+
+    if labels is None:
+        labels = []
+    elif not isinstance(labels, list):
+        raise ToolError(
+            f"Tool argument `labels` MUST be of type list. Got {type(labels)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mr_data = {
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+            "title": title,
+            "description": description,
+        }
+        if labels:
+            mr_data["labels"] = ",".join(labels)
+
+        mr = project.mergerequests.create(mr_data)
+        return {
+            "iid": mr.iid,
+            "title": mr.title,
+            "description": mr.description,
+            "state": mr.state,
+            "source_branch": mr.source_branch,
+            "target_branch": mr.target_branch,
+            "labels": mr.labels,
+        }
+    except Exception as e:
+        raise ToolError(f"Failed to create merge request: {e}")
+
+
+def gitlab_close_mr(alias: str, mr_iid: int) -> str:
+    """
+    Close a GitLab merge request.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(mr_iid, int):
+        raise ToolError(
+            f"Tool argument `mr_iid` MUST be of type int. Got {type(mr_iid)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mr = project.mergerequests.get(mr_iid)
+        mr.state_event = "close"
+        mr.save()
+        return f"Merge request {mr_iid} closed"
+    except Exception as e:
+        raise ToolError(f"Failed to close merge request {mr_iid}: {e}")
+
+
+def gitlab_comment_mr(alias: str, mr_iid: int, body: str) -> str:
+    """
+    Add a comment to a GitLab merge request.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(mr_iid, int):
+        raise ToolError(
+            f"Tool argument `mr_iid` MUST be of type int. Got {type(mr_iid)}."
+        )
+    if not isinstance(body, str):
+        raise ToolError(
+            f"Tool argument `body` MUST be of type string. Got {type(body)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mr = project.mergerequests.get(mr_iid)
+        mr.notes.create({"body": body})
+        return f"Comment added to merge request {mr_iid}"
+    except Exception as e:
+        raise ToolError(f"Failed to comment on merge request {mr_iid}: {e}")
+
+
+def gitlab_list_mr_comments(alias: str, mr_iid: int) -> List[dict]:
+    """
+    List comments of a GitLab merge request.
+    """
+    if not isinstance(alias, str):
+        raise ToolError(
+            f"Tool argument `alias` MUST be of type string. Got {type(alias)}."
+        )
+    if not isinstance(mr_iid, int):
+        raise ToolError(
+            f"Tool argument `mr_iid` MUST be of type int. Got {type(mr_iid)}."
+        )
+
+    project = _get_project(alias)
+
+    try:
+        mr = project.mergerequests.get(mr_iid)
+        comments = mr.notes.list(all=True)
+        return [
+            {
+                "author": note.author["username"],
+                "body": note.body,
+                "created_at": note.created_at,
+            }
+            for note in comments
+        ]
+    except Exception as e:
+        raise ToolError(f"Failed to list comments for merge request {mr_iid}: {e}")
+
+
 def load_gitlab_config() -> list:
     gitlab_config_path = Path.home() / ".config" / "gno6" / "gitlab.json"
 
@@ -406,6 +614,77 @@ def get_gitlab_tools():
             ":param alias: GitLab instance alias (str)\n"
             ":param state: 'opened' or 'closed' (str)",
             gitlab_list_issues,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_get_mr",
+            "Retrieve a GitLab merge request by its IID.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param mr_iid: the merge request IID (int)",
+            gitlab_get_mr,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_list_mrs",
+            "List GitLab merge requests in the project.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param state: 'opened', 'closed', or 'merged' (str)",
+            gitlab_list_mrs,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_create_mr",
+            "Create a new GitLab merge request.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param source_branch: source branch name (str)\n"
+            ":param target_branch: target branch name (str)\n"
+            ":param title: merge request title (str)\n"
+            ":param description: merge request description (str, optional)\n"
+            ":param labels: list of label names (list of str, optional)",
+            gitlab_create_mr,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_close_mr",
+            "Close a GitLab merge request.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param mr_iid: the merge request IID (int)",
+            gitlab_close_mr,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_comment_mr",
+            "Add a comment to a GitLab merge request.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param mr_iid: the merge request IID (int)\n"
+            ":param body: comment text (str)",
+            gitlab_comment_mr,
+            max_custom_error=70,
+            max_call_error=70,
+            optional=True,
+            tool_type=ToolType.OPENAI,
+        ),
+        Tool(
+            "gitlab_list_mr_comments",
+            "List comments of a GitLab merge request.\n"
+            ":param alias: GitLab instance alias (str)\n"
+            ":param mr_iid: the merge request IID (int)",
+            gitlab_list_mr_comments,
             max_custom_error=70,
             max_call_error=70,
             optional=True,
