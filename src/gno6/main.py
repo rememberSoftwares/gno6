@@ -817,6 +817,24 @@ def manage_jira_connections(command: str) -> bool:
     return False
 
 
+def load_tools_config() -> list:
+    tools_config_path = Path.home() / ".config" / "gno6" / "tools.json"
+
+    if not tools_config_path.exists():
+        return []
+
+    with open(tools_config_path, "r") as f:
+        return json.load(f).get("tools", [])
+
+
+def save_tools_config(tools: list):
+    tools_config_path = Path.home() / ".config" / "gno6" / "tools.json"
+    tools_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(tools_config_path, "w") as f:
+        json.dump({"tools": tools}, f, indent=2)
+
+
 def load_mcp_tools() -> list[Tool]:
     mcp_config_path = Path.home() / ".config" / "gno6" / "mcp.json"
 
@@ -848,6 +866,143 @@ def load_mcp_tools() -> list[Tool]:
     return tools
 
 
+DEFAULT_TOOLS = [
+    {"name": "kubectl_exec", "display": "Kubectl", "active": True},
+    {"name": "helm_exec", "display": "Helm", "active": True},
+    {"name": "git_exec", "display": "Git", "active": True},
+    {"name": "human_in_the_loop", "display": "Ask Question", "active": True},
+    {"name": "sleep", "display": "Sleep", "active": True},
+    {"name": "task_is_solved", "display": "Task Complete", "active": True},
+    {"name": "list_files", "display": "List Files", "active": True},
+    {"name": "read_file", "display": "Read File", "active": True},
+    {"name": "write_file", "display": "Write File", "active": True},
+    {"name": "edit_file", "display": "Edit File", "active": True},
+    {"name": "search_in_files", "display": "Search Files", "active": True},
+    {"name": "exec_script", "display": "Run Script", "active": True},
+    {
+        "name": "gitlab_list_aliases",
+        "display": "GitLab: List Instances",
+        "active": True,
+    },
+    {"name": "gitlab_get_issue", "display": "GitLab: Get Issue", "active": True},
+    {
+        "name": "gitlab_list_issue_comments",
+        "display": "GitLab: Get Issue Comments",
+        "active": True,
+    },
+    {
+        "name": "gitlab_comment_issue",
+        "display": "GitLab: Comment Issue",
+        "active": True,
+    },
+    {"name": "gitlab_close_issue", "display": "GitLab: Close Issue", "active": True},
+    {"name": "gitlab_create_issue", "display": "GitLab: Create Issue", "active": True},
+    {"name": "gitlab_add_label", "display": "GitLab: Add Label", "active": True},
+    {"name": "gitlab_list_issues", "display": "GitLab: List Issues", "active": True},
+    {"name": "gitlab_get_mr", "display": "GitLab: Get Merge Request", "active": True},
+    {
+        "name": "gitlab_list_mrs",
+        "display": "GitLab: List Merge Requests",
+        "active": True,
+    },
+    {
+        "name": "gitlab_create_mr",
+        "display": "GitLab: Create Merge Request",
+        "active": True,
+    },
+    {
+        "name": "gitlab_close_mr",
+        "display": "GitLab: Close Merge Request",
+        "active": True,
+    },
+    {
+        "name": "gitlab_comment_mr",
+        "display": "GitLab: Comment Merge Request",
+        "active": True,
+    },
+    {
+        "name": "gitlab_list_mr_comments",
+        "display": "GitLab: Get MR Comments",
+        "active": True,
+    },
+    {"name": "jira_list_aliases", "display": "Jira: List Instances", "active": True},
+    {"name": "jira_get_issue", "display": "Jira: Get Issue", "active": True},
+    {"name": "jira_search_issues", "display": "Jira: Search Issues", "active": True},
+    {"name": "jira_create_issue", "display": "Jira: Create Issue", "active": True},
+    {"name": "jira_add_comment", "display": "Jira: Add Comment", "active": True},
+    {"name": "jira_get_comments", "display": "Jira: Get Comments", "active": True},
+    {
+        "name": "jira_get_transitions",
+        "display": "Jira: Get Transitions",
+        "active": True,
+    },
+    {
+        "name": "jira_transition_issue",
+        "display": "Jira: Transition Issue",
+        "active": True,
+    },
+    {"name": "jira_get_projects", "display": "Jira: List Projects", "active": True},
+]
+
+
+def merge_tools_config(existing: list) -> list:
+    existing_names = set()
+    for entry in existing:
+        if isinstance(entry, dict):
+            existing_names.add(entry.get("name"))
+        else:
+            existing_names.add(entry)
+    merged = list(existing)
+    for tool in DEFAULT_TOOLS:
+        if tool["name"] not in existing_names:
+            merged.append(tool)
+    return merged
+
+
+def manage_tools(command: str) -> bool:
+    if command.startswith("/tools"):
+        tools_config = load_tools_config()
+
+        if not tools_config:
+            tools_config = DEFAULT_TOOLS.copy()
+            save_tools_config(tools_config)
+        else:
+            tools_config = merge_tools_config(tools_config)
+            save_tools_config(tools_config)
+
+        choices = []
+        for entry in tools_config:
+            if isinstance(entry, dict):
+                name = entry.get("name", "")
+                display = entry.get("display", name)
+                active = entry.get("active", True)
+                status = "[Active]" if active else "[Inactive]"
+                choices.append(f"{status} {display}")
+            else:
+                choices.append(f"[Active] {entry}")
+        try:
+            selected = questionary.checkbox(
+                "Select tools to toggle:", choices=choices
+            ).ask()
+        except KeyboardInterrupt:
+            return False
+        if selected is None:
+            return False
+
+        for selected_item in selected:
+            selected_index = choices.index(selected_item)
+            entry = tools_config[selected_index]
+            if isinstance(entry, dict):
+                tools_config[selected_index]["active"] = not entry.get("active", True)
+            else:
+                tools_config[selected_index] = {"name": entry, "active": False}
+
+        save_tools_config(tools_config)
+        print(f"Tools updated.")
+        return True
+    return False
+
+
 def main():
     (
         kubectl_exec_tool,
@@ -864,6 +1019,14 @@ def main():
         exec_script_tool,
     ) = init_tools()
 
+    tools_config = load_tools_config()
+    if not tools_config:
+        tools_config = DEFAULT_TOOLS.copy()
+        save_tools_config(tools_config)
+    else:
+        tools_config = merge_tools_config(tools_config)
+        save_tools_config(tools_config)
+
     mcp_tools = load_mcp_tools()
     gitlab_tools = get_gitlab_tools()
     jira_tools = get_jira_tools()
@@ -872,7 +1035,7 @@ def main():
     while True:
         init: bool = True
 
-        print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira")
+        print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira\n*/tools")
         print("")
         try:
             user_query: str = questionary.autocomplete(
@@ -883,6 +1046,7 @@ def main():
                     "/mcp - Manage MCP connections",
                     "/gitlab - Manage GitLab connections",
                     "/jira - Manage Jira connections",
+                    "/tools - Manage tools",
                 ],
                 match_middle=False,
             ).ask()
@@ -905,6 +1069,9 @@ def main():
             jira_tools = get_jira_tools()
             continue
 
+        if manage_tools(user_query):
+            continue
+
         cmd, agent_from_state = load_agent(user_query)
         if cmd is True:
             main_agent = agent_from_state
@@ -915,6 +1082,32 @@ def main():
             main_agent,
             tools=[ask_question_tool],
         )
+
+        active_tools = []
+
+        all_tools = (
+            [
+                kubectl_exec_tool,
+                helm_exec_tool,
+                git_exec_tool,
+                sleep_tool,
+                ask_question_tool,
+                list_files_tool,
+                read_file_tool,
+                write_file_tool,
+                edit_file_tool,
+                search_in_files,
+                exec_script_tool,
+            ]
+            + gitlab_tools
+            + jira_tools
+        )
+
+        for tool in all_tools:
+            for entry in tools_config:
+                if entry.get("name") == tool.tool_name and entry.get("active", True):
+                    active_tools.append(tool)
+                    break
 
         try:
             while True:
@@ -927,21 +1120,7 @@ def main():
                 Task(
                     prompt,
                     main_agent,
-                    tools=[
-                        kubectl_exec_tool,
-                        helm_exec_tool,
-                        git_exec_tool,
-                        sleep_tool,
-                        ask_question_tool,
-                        list_files_tool,
-                        read_file_tool,
-                        write_file_tool,
-                        edit_file_tool,
-                        search_in_files,
-                    ]
-                    + mcp_tools
-                    + gitlab_tools
-                    + jira_tools,
+                    tools=active_tools + mcp_tools,
                     tags=["kubectl", uid],
                 ).solve()
                 init = False
