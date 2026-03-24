@@ -25,6 +25,17 @@ print("Booting...")
 
 from typing import Tuple
 
+from agent_config import (
+    load_agents_config,
+    save_agents_config,
+    load_tools_config,
+    save_tools_config,
+    configure_agent,
+    JIRA_TOOL_NAMES,
+    GITLAB_TOOL_NAMES,
+    BASE_TOOL_NAMES,
+)
+
 from yacana import (
     OllamaAgent,
     OpenAiAgent,
@@ -817,22 +828,139 @@ def manage_jira_connections(command: str) -> bool:
     return False
 
 
-def load_tools_config() -> list:
-    tools_config_path = Path.home() / ".config" / "gno6" / "tools.json"
+def manage_agents(command: str) -> bool:
+    if command.startswith("/agent"):
+        agents = load_agents_config()
 
-    if not tools_config_path.exists():
-        return []
+        try:
+            choice = questionary.select(
+                "Agent management:",
+                choices=["Create", "Edit", "Delete", "List", "Back"],
+            ).ask()
+        except KeyboardInterrupt:
+            return False
 
-    with open(tools_config_path, "r") as f:
-        return json.load(f).get("tools", [])
+        if choice is None or choice == "Back":
+            return True
 
+        if choice == "Create":
+            try:
+                name = questionary.text("Agent name:").ask()
+            except KeyboardInterrupt:
+                return False
+            if not name:
+                print("Agent name is required.")
+                return True
 
-def save_tools_config(tools: list):
-    tools_config_path = Path.home() / ".config" / "gno6" / "tools.json"
-    tools_config_path.parent.mkdir(parents=True, exist_ok=True)
+            if name.lower() == "main":
+                print("'main' is a reserved agent name.")
+                return True
 
-    with open(tools_config_path, "w") as f:
-        json.dump({"tools": tools}, f, indent=2)
+            existing_names = [a.get("name") for a in agents]
+            if name in existing_names:
+                print(f"Agent '{name}' already exists.")
+                return True
+
+            jira_aliases, gitlab_aliases, tool_names = configure_agent()
+            if jira_aliases is None:
+                return True
+
+            agents.append(
+                {
+                    "name": name,
+                    "jira_aliases": jira_aliases,
+                    "gitlab_aliases": gitlab_aliases,
+                    "tools": tool_names,
+                }
+            )
+            save_agents_config(agents)
+            print(f"Agent '{name}' created.")
+
+        elif choice == "Edit":
+            editable_agents = [
+                a.get("name", "") for a in agents if a.get("name") != "main"
+            ]
+            if not editable_agents:
+                print("No editable agents configured.")
+                return True
+
+            try:
+                selected = questionary.select(
+                    "Select agent to edit:",
+                    choices=editable_agents + ["(Cancel)"],
+                ).ask()
+            except KeyboardInterrupt:
+                return False
+
+            if selected is None or selected == "(Cancel)":
+                return True
+
+            agent_to_edit = None
+            for a in agents:
+                if a.get("name") == selected:
+                    agent_to_edit = a
+                    break
+
+            if not agent_to_edit:
+                return True
+
+            print(f"Editing agent: {selected}")
+            jira_aliases, gitlab_aliases, tool_names = configure_agent(
+                jira_aliases=agent_to_edit.get("jira_aliases", []),
+                gitlab_aliases=agent_to_edit.get("gitlab_aliases", []),
+                tool_names=agent_to_edit.get("tools", []),
+            )
+            if jira_aliases is None:
+                return True
+
+            agent_to_edit["jira_aliases"] = jira_aliases
+            agent_to_edit["gitlab_aliases"] = gitlab_aliases
+            agent_to_edit["tools"] = tool_names
+            save_agents_config(agents)
+            print(f"Agent '{selected}' updated.")
+
+        elif choice == "Delete":
+            deletable_agents = [
+                a.get("name", "") for a in agents if a.get("name") != "main"
+            ]
+            if not deletable_agents:
+                print("No agents configured.")
+                return True
+
+            try:
+                selected = questionary.select(
+                    "Select agent to delete:",
+                    choices=deletable_agents + ["(Cancel)"],
+                ).ask()
+            except KeyboardInterrupt:
+                return False
+
+            if selected is None or selected == "(Cancel)":
+                return True
+
+            for i, a in enumerate(agents):
+                if a.get("name") == selected:
+                    agents.pop(i)
+                    break
+            save_agents_config(agents)
+            print(f"Agent '{selected}' deleted.")
+
+        elif choice == "List":
+            if not agents:
+                print("No agents configured.")
+            else:
+                for agent in agents:
+                    print(f"\nAgent: {agent.get('name')}")
+                    print(
+                        f"  Jira: {', '.join(agent.get('jira_aliases', [])) or 'None'}"
+                    )
+                    print(
+                        f"  GitLab: {', '.join(agent.get('gitlab_aliases', [])) or 'None'}"
+                    )
+                    print(f"  Tools: {', '.join(agent.get('tools', [])) or 'None'}")
+
+        return True
+    return False
 
 
 def load_mcp_tools() -> list[Tool]:
@@ -970,32 +1098,34 @@ def manage_tools(command: str) -> bool:
             tools_config = merge_tools_config(tools_config)
             save_tools_config(tools_config)
 
+        from questionary import Choice
+
         choices = []
         for entry in tools_config:
             if isinstance(entry, dict):
                 name = entry.get("name", "")
                 display = entry.get("display", name)
                 active = entry.get("active", True)
-                status = "[Active]" if active else "[Inactive]"
-                choices.append(f"{status} {display}")
+                choices.append(Choice(display, value=name, checked=active))
             else:
-                choices.append(f"[Active] {entry}")
+                choices.append(Choice(entry, value=entry, checked=True))
+
         try:
             selected = questionary.checkbox(
-                "Select tools to toggle:", choices=choices
+                "Select active tools:", choices=choices
             ).ask()
         except KeyboardInterrupt:
-            return False
-        if selected is None:
-            return False
+            return True
 
-        for selected_item in selected:
-            selected_index = choices.index(selected_item)
-            entry = tools_config[selected_index]
+        if selected is None:
+            return True
+
+        selected_set = set(selected)
+        for i, entry in enumerate(tools_config):
             if isinstance(entry, dict):
-                tools_config[selected_index]["active"] = not entry.get("active", True)
+                tools_config[i]["active"] = entry.get("name", "") in selected_set
             else:
-                tools_config[selected_index] = {"name": entry, "active": False}
+                tools_config[i] = {"name": entry, "active": entry in selected_set}
 
         save_tools_config(tools_config)
         print(f"Tools updated.")
@@ -1027,15 +1157,49 @@ def main():
         tools_config = merge_tools_config(tools_config)
         save_tools_config(tools_config)
 
+    base_gitlab_tools = get_gitlab_tools()
+    base_jira_tools = get_jira_tools()
     mcp_tools = load_mcp_tools()
-    gitlab_tools = get_gitlab_tools()
-    jira_tools = get_jira_tools()
     endpoint, api_key, model, endpoint_provider, log_level = get_config_from_env()
     main_agent = init_agent(endpoint, api_key, model, endpoint_provider, log_level)
+
+    current_agent_config = None
+
+    MAIN_AGENT = {
+        "name": "main",
+        "jira_aliases": [],
+        "gitlab_aliases": [],
+        "tools": [],
+        "is_main": True,
+    }
+
+    agents = load_agents_config()
+    agent_choices = ["main (all configurations)"] + [
+        a.get("name", "") for a in agents if a.get("name") != "main"
+    ]
+    try:
+        selected_agent = questionary.select(
+            "Select an agent:",
+            choices=agent_choices,
+        ).ask()
+    except KeyboardInterrupt:
+        print("\nGoodbye!")
+        return 0
+
+    if selected_agent and selected_agent != "main (all configurations)":
+        for a in agents:
+            if a.get("name") == selected_agent:
+                current_agent_config = a
+                print(f"Using agent: {selected_agent}")
+                break
+    else:
+        current_agent_config = MAIN_AGENT
+        print("Using agent: main")
+
     while True:
         init: bool = True
 
-        print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira\n*/tools")
+        print("Commands:\n*/history\n*/mcp\n*/gitlab\n*/jira\n*/agent\n*/tools")
         print("")
         try:
             user_query: str = questionary.autocomplete(
@@ -1046,6 +1210,7 @@ def main():
                     "/mcp - Manage MCP connections",
                     "/gitlab - Manage GitLab connections",
                     "/jira - Manage Jira connections",
+                    "/agent - Manage agents",
                     "/tools - Manage tools",
                 ],
                 match_middle=False,
@@ -1062,14 +1227,19 @@ def main():
             continue
 
         if manage_gitlab_connections(user_query):
-            gitlab_tools = get_gitlab_tools()
+            base_gitlab_tools = get_gitlab_tools()
             continue
 
         if manage_jira_connections(user_query):
-            jira_tools = get_jira_tools()
+            base_jira_tools = get_jira_tools()
+            continue
+
+        if manage_agents(user_query):
+            agents = load_agents_config()
             continue
 
         if manage_tools(user_query):
+            tools_config = load_tools_config()
             continue
 
         cmd, agent_from_state = load_agent(user_query)
@@ -1085,29 +1255,50 @@ def main():
 
         active_tools = []
 
-        all_tools = (
-            [
-                kubectl_exec_tool,
-                helm_exec_tool,
-                git_exec_tool,
-                sleep_tool,
-                ask_question_tool,
-                list_files_tool,
-                read_file_tool,
-                write_file_tool,
-                edit_file_tool,
-                search_in_files,
-                exec_script_tool,
-            ]
-            + gitlab_tools
-            + jira_tools
-        )
+        agent_tool_names = set(current_agent_config.get("tools", []))
+        agent_jira_aliases = current_agent_config.get("jira_aliases", [])
+        agent_gitlab_aliases = current_agent_config.get("gitlab_aliases", [])
+        is_main = current_agent_config.get("is_main", False)
 
-        for tool in all_tools:
-            for entry in tools_config:
-                if entry.get("name") == tool.tool_name and entry.get("active", True):
-                    active_tools.append(tool)
-                    break
+        base_tools = [
+            kubectl_exec_tool,
+            helm_exec_tool,
+            git_exec_tool,
+            sleep_tool,
+            ask_question_tool,
+            list_files_tool,
+            read_file_tool,
+            write_file_tool,
+            edit_file_tool,
+            search_in_files,
+            exec_script_tool,
+        ]
+
+        for tool in base_tools:
+            tool_name = tool.tool_name
+            if is_main or not agent_tool_names or tool_name in agent_tool_names:
+                for entry in tools_config:
+                    if entry.get("name") == tool_name and entry.get("active", True):
+                        active_tools.append(tool)
+                        break
+
+        if is_main or agent_gitlab_aliases:
+            for tool in base_gitlab_tools:
+                tool_name = tool.tool_name
+                if is_main or not agent_tool_names or tool_name in agent_tool_names:
+                    for entry in tools_config:
+                        if entry.get("name") == tool_name and entry.get("active", True):
+                            active_tools.append(tool)
+                            break
+
+        if is_main or agent_jira_aliases:
+            for tool in base_jira_tools:
+                tool_name = tool.tool_name
+                if is_main or not agent_tool_names or tool_name in agent_tool_names:
+                    for entry in tools_config:
+                        if entry.get("name") == tool_name and entry.get("active", True):
+                            active_tools.append(tool)
+                            break
 
         try:
             while True:
