@@ -232,12 +232,15 @@ def configure_agent(
     jira_aliases: Optional[List[str]] = None,
     gitlab_aliases: Optional[List[str]] = None,
     tool_names: Optional[List[str]] = None,
+    system_prompt: Optional[str] = None,
     questionary_module=None,
-) -> Tuple[Optional[List[str]], Optional[List[str]], Optional[List[str]]]:
+) -> Tuple[
+    Optional[List[str]], Optional[List[str]], Optional[List[str]], Optional[str]
+]:
     """
-    Configure an agent with Jira, GitLab instances and tools.
+    Configure an agent with Jira, GitLab instances, tools and system prompt.
 
-    Returns (jira_aliases, gitlab_aliases, tool_names) or (None, None, None) on cancel.
+    Returns (jira_aliases, gitlab_aliases, tool_names, system_prompt) or (None, None, None, None) on cancel.
     """
     if questionary_module is None:
         import questionary
@@ -350,7 +353,7 @@ def configure_agent(
                 choices=choices,
             ).ask()
         except KeyboardInterrupt:
-            return None, None, None
+            return None, None, None, None
     else:
         selected_disabled = []
 
@@ -363,4 +366,30 @@ def configure_agent(
 
     new_tool_names = [t for t in available_tool_names if t not in disabled_names]
 
-    return new_jira_aliases, new_gitlab_aliases, new_tool_names
+    try:
+        prompt_hint = (
+            "\n      ".join(system_prompt.split("\n")) if system_prompt else ""
+        )
+        edit_choice = questionary.select(
+            "System prompt:",
+            choices=["Keep current", "Edit", "Clear"],
+            default="Keep current" if system_prompt else "Edit",
+        ).ask()
+    except KeyboardInterrupt:
+        return None, None, None, None
+
+    new_system_prompt = system_prompt
+    if edit_choice == "Edit":
+        try:
+            new_system_prompt = questionary.text(
+                "Enter system prompt (multiline supported, Ctrl+D to finish):",
+                default=system_prompt or "",
+            ).ask()
+        except KeyboardInterrupt:
+            return None, None, None, None
+        if new_system_prompt is None:
+            new_system_prompt = system_prompt
+    elif edit_choice == "Clear":
+        new_system_prompt = ""
+
+    return new_jira_aliases, new_gitlab_aliases, new_tool_names, new_system_prompt

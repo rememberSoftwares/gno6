@@ -318,12 +318,9 @@ def init_tools():
     )
 
 
-def init_agent(
-    endpoint: str, api_key: str, model: str, type: str, logging_level=None
-) -> GenericAgent:
-    system_prompt = """You are a helpful AI DEVOPS assistant expert on kubernetes. Your job is to fulfill a DEVOPS related task given by the Kubernetes cluster admin. To help you fulfill the task you have access to a list of tools letting you interact with k8s cluters, Gitlab or Jira. Use them wisely. When debbuging, always follow this approch:
+MAIN_SYSTEM_PROMPT = """You are a helpful AI DEVOPS assistant expert on kubernetes. Your job is to fulfill a DEVOPS related task given by the Kubernetes cluster admin. To help you fulfill the task you have access to a list of tools letting you interact with k8s cluters, Gitlab or Jira. Use them wisely. When debbuging, always follow this approch:
 
-# PLANIFICATION PHASE
+# PLANIFICATION PHASE
 * Always plan your tasks in advance.
 
 # SCOUTING PHASE
@@ -347,6 +344,19 @@ General guidelines:
 - never change indentation outside the edited lines  
 - match the indentation level of surrounding lines  
 """
+
+
+def init_agent(
+    endpoint: str,
+    api_key: str,
+    model: str,
+    type: str,
+    logging_level=None,
+    system_prompt: str = None,
+) -> GenericAgent:
+    if system_prompt is None:
+        system_prompt = MAIN_SYSTEM_PROMPT
+
     if type == "openai":
         agent = OpenAiAgent(
             "AI assistant",
@@ -861,7 +871,7 @@ def manage_agents(command: str) -> bool:
                 print(f"Agent '{name}' already exists.")
                 return True
 
-            jira_aliases, gitlab_aliases, tool_names = configure_agent()
+            jira_aliases, gitlab_aliases, tool_names, system_prompt = configure_agent()
             if jira_aliases is None:
                 return True
 
@@ -871,6 +881,7 @@ def manage_agents(command: str) -> bool:
                     "jira_aliases": jira_aliases,
                     "gitlab_aliases": gitlab_aliases,
                     "tools": tool_names,
+                    "system_prompt": system_prompt,
                 }
             )
             save_agents_config(agents)
@@ -905,10 +916,11 @@ def manage_agents(command: str) -> bool:
                 return True
 
             print(f"Editing agent: {selected}")
-            jira_aliases, gitlab_aliases, tool_names = configure_agent(
+            jira_aliases, gitlab_aliases, tool_names, system_prompt = configure_agent(
                 jira_aliases=agent_to_edit.get("jira_aliases", []),
                 gitlab_aliases=agent_to_edit.get("gitlab_aliases", []),
                 tool_names=agent_to_edit.get("tools", []),
+                system_prompt=agent_to_edit.get("system_prompt", ""),
             )
             if jira_aliases is None:
                 return True
@@ -916,6 +928,7 @@ def manage_agents(command: str) -> bool:
             agent_to_edit["jira_aliases"] = jira_aliases
             agent_to_edit["gitlab_aliases"] = gitlab_aliases
             agent_to_edit["tools"] = tool_names
+            agent_to_edit["system_prompt"] = system_prompt
             save_agents_config(agents)
             print(f"Agent '{selected}' updated.")
 
@@ -1191,6 +1204,16 @@ def main():
             if a.get("name") == selected_agent:
                 current_agent_config = a
                 print(f"Using agent: {selected_agent}")
+                agent_system_prompt = a.get("system_prompt", "") or MAIN_SYSTEM_PROMPT
+                if agent_system_prompt != MAIN_SYSTEM_PROMPT:
+                    main_agent = init_agent(
+                        endpoint,
+                        api_key,
+                        model,
+                        endpoint_provider,
+                        log_level,
+                        system_prompt=agent_system_prompt,
+                    )
                 break
     else:
         current_agent_config = MAIN_AGENT
