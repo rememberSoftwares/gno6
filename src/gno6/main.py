@@ -81,16 +81,6 @@ class CustomTool(Enum):
     SOLVED_TASK = 4
 
 
-class TaskIsSolved(Exception):
-    """
-    Exception raised when the LLM thinks that the current task is solved.
-    """
-
-    def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)
-
-
 class UserInterrupt(Exception):
     """
     Exception raised when user presses Ctrl+C during agent execution.
@@ -104,12 +94,12 @@ class UserInterrupt(Exception):
 ############################
 
 
-def mission_accomplished(final_report: str):
+def mission_accomplished(final_report: str) -> str:
     """
-    When the task is done, ends the current workflow.
+    When the task is done, returns a JSON indicating task completion.
     """
     print(f"{ANSI_GREEN}{final_report}{ANSI_RESET}")
-    raise TaskIsSolved("LLM thinks it solved the initial task")
+    return json.dumps({"solved": True, "report": final_report})
 
 
 #################################
@@ -334,6 +324,7 @@ def save_conversation(agent: GenericAgent):
         Task(
             "Based on what was intialy asked and what you did, create a one short sentence sumurrizing the main topic of this conversation. This will be used as conversation title. Answer only with the title.",
             agent,
+            tools=[],
             forget=True,
         )
         .solve()
@@ -1230,18 +1221,37 @@ def main():
                 ).solve()
                 init = False
 
-                Task(
+                result = Task(
                     "In your opinion, is the initial task solved or should you keep working ?",
                     main_agent,
                     tools=[task_is_solved_tool],
                     tags=[uid],
                 ).solve()
 
-        except TaskIsSolved:
-            save_conversation(main_agent)
+                solved = False
+                if result.tool_calls:
+                    for tool_call in result.tool_calls:
+                        if tool_call.tool_name == "task_is_solved":
+                            try:
+                                data = (
+                                    json.loads(tool_call.result)
+                                    if isinstance(tool_call.result, str)
+                                    else tool_call.result
+                                )
+                                if data.get("solved", False):
+                                    solved = True
+                                    break
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+
+                if solved:
+                    break
+
         except KeyboardInterrupt:
             print("\nTask interrupted. Returning to main menu...")
             continue
+
+        save_conversation(main_agent)
 
 
 if __name__ == "__main__":
